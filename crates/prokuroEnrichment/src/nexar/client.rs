@@ -388,10 +388,45 @@ mod tests {
         map_batch_response,
     };
 
+    const MULTIMATCH_HIT_FIXTURE: &str = r#"{
+      "data": {
+        "supMultiMatch": [
+          {
+            "parts": [
+              {
+                "mpn": "GRM188R71H104KA93D",
+                "manufacturer": { "name": "Murata" },
+                "totalAvail": 125340,
+                "sellers": [
+                  {
+                    "company": { "name": "Digi-Key" },
+                    "offers": [{ "inventoryLevel": 84320, "factoryLeadDays": 14 }]
+                  },
+                  {
+                    "company": { "name": "Mouser" },
+                    "offers": [{ "inventoryLevel": 41020, "factoryLeadDays": 21 }]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }"#;
+
+    const MULTIMATCH_MISS_FIXTURE: &str = r#"{
+      "data": {
+        "supMultiMatch": [
+          {
+            "parts": []
+          }
+        ]
+      }
+    }"#;
+
     #[test]
     fn hit_maps_to_in_stock_active() {
-        let payload =
-            include_str!("../../tests/fixtures/nexar/multimatch_hit.json");
+        let payload = MULTIMATCH_HIT_FIXTURE;
         let response: SupMultiMatchResponse =
             serde_json::from_str(payload).expect("fixture should deserialize");
         let inputs = vec![MatchInput {
@@ -409,8 +444,7 @@ mod tests {
 
     #[test]
     fn miss_maps_to_no_match() {
-        let payload =
-            include_str!("../../tests/fixtures/nexar/multimatch_miss.json");
+        let payload = MULTIMATCH_MISS_FIXTURE;
         let response: SupMultiMatchResponse =
             serde_json::from_str(payload).expect("fixture should deserialize");
         let inputs = vec![MatchInput {
@@ -426,8 +460,7 @@ mod tests {
 
     #[test]
     fn lifecycle_defaults_to_unknown() {
-        let payload =
-            include_str!("../../tests/fixtures/nexar/multimatch_hit.json");
+        let payload = MULTIMATCH_HIT_FIXTURE;
         let response: SupMultiMatchResponse =
             serde_json::from_str(payload).expect("fixture should deserialize");
         let inputs = vec![MatchInput {

@@ -59,7 +59,7 @@ pub fn normalize_row(
 
         // AML split on comma or pipe
         let parts: Vec<String> = if upper.contains(',') || upper.contains('|') {
-            upper.split(|c| c == ',' || c == '|')
+            upper.split([',', '|'])
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect()
