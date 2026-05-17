@@ -16,7 +16,6 @@ crates/prokuroEnrichment/tests/fixtures/nexar/
 corpus/reports/
 
 # data scraping for BOMs
-bom_harvest.py.save
-bom_harvest.py
 bom_data/
-# ^ this stuff is the FAT files that we scraped from Github
+# ^ these are stuff is the FAT files that we scraped from Github. 
+# for smaller files to play around with, check corpus/raw/
