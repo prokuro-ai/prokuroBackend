@@ -54,14 +54,27 @@ mod tests {
 
         let sheets = read_xlsx(&bytes).expect("xlsx fixture should parse");
 
-        assert_eq!(sheets.len(), 2);
+        assert_eq!(sheets.len(), 1);
         assert_eq!(sheets[0].0, "BOM");
-        assert_eq!(sheets[1].0, "Notes");
-        assert_eq!(sheets[0].1[0], vec!["mpn".to_string(), "".to_string(), "qty".to_string()]);
         assert_eq!(
             sheets[0].1[1],
-            vec!["RC0603FR-0710KL".to_string(), "".to_string(), "5".to_string()]
+            vec![
+                "GRM155R61A104KA01D".to_string(),
+                "Murata".to_string(),
+                "1".to_string(),
+                "C1".to_string(),
+                "Capacitor 100nF 10V X5R 0402".to_string(),
+            ]
         );
-        assert_eq!(sheets[1].1[0], vec!["note".to_string()]);
+        assert_eq!(
+            sheets[0].1[2],
+            vec![
+                "CRCW060310K0FKEA".to_string(),
+                "Vishay".to_string(),
+                "2".to_string(),
+                "R1;R2".to_string(),
+                "Resistor 10k 1% 0603".to_string(),
+            ]
+        );
     }
 }
