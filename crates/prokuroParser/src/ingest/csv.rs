@@ -10,6 +10,7 @@ pub fn read_csv(bytes: &[u8]) -> Result<Vec<Vec<String>>, ParseError> {
 
     let mut reader = ::csv::ReaderBuilder::new()
         .has_headers(false)
+        .flexible(true)
         .delimiter(delimiter)
         .from_reader(Cursor::new(bytes));
 

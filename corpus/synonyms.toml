@@ -1,0 +1,33 @@
+[[group]]
+aliases = [
+  "mpn", "mfr part #", "mfg part #", "mfr. part #", "manf. part #",
+  "manufacturer part number", "manufacturer part", "manufacturer pn",
+  "part number", "part no", "part #", "pn", "manufacturer sku",
+]
+
+[[group]]
+aliases = [
+  "qty", "quantity", "count", "amount", "q", "number", "number of", "total",
+]
+
+[[group]]
+aliases = [
+  "reference", "ref", "refdes", "designator", "refs", "references",
+  "ref designator", "component reference",
+]
+
+[[group]]
+aliases = [
+  "manufacturer", "mfr", "mfg", "brand", "make", "mfgr",
+]
+
+[[group]]
+aliases = [
+  "description", "desc", "value", "designation", "device",
+  "component", "part description", "specification",
+]
+
+[[group]]
+aliases = [
+  "footprint", "package", "case", "pcb footprint", "pcb package", "pattern",
+]

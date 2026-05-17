@@ -19,6 +19,7 @@ calamine = "*"
 csv = "*"
 strsim = "*"
 thiserror = "*"
+toml = "*"
 tracing = "*"
 tracing-subscriber = "*"
 tower-http = { version = "*", features = ["trace"] }
