@@ -1,0 +1,60 @@
+TERRA Board Bill Of Materials,,30 July 2013,,
+,,,,
+Comment,Description,Designator,Footprint,Quantity
+,,,,
+BC STANDARD 1220,Battery Holder standard SMD 1212 1215 1220 1225,BC1,Battery CR1220 Holder,1
+1nF 1kV,"Capacitor, Multi Layer Ceramic",C1,CC 1808 (4520 metric),1
+47uF,"Capacitor, Multi Layer Ceramic","C2, C5, C16, C23, C24, C25, C31",CC 1206 (3216 metric),7
+100nF,"Capacitor, Multi Layer Ceramic","C3, C4, C6, C7, C8, C9, C10, C13, C14, C34",CC 0402 (1005 metric) SMALL,10
+10uF,"Capacitor, Multi Layer Ceramic",C11,CC 0805 (2012 metric),1
+1uF,"Capacitor, Multi Layer Ceramic","C12, C28, C29, C30",CC 0603 (1608 metric),4
+1000uF,Electrolytic Capacitor,"C15, C26, C32",CE SMD D10 H10,3
+1nF 0603,"Capacitor, Multi Layer Ceramic",C17,CC 0603 (1608 metric),1
+100pF 0603,"Capacitor, Multi Layer Ceramic",C18,CC 0603 (1608 metric),1
+10uF 50V,"Capacitor, Multi Layer Ceramic","C19, C20, C21",CC 1206 (3216 metric),3
+10nF,"Capacitor, Multi Layer Ceramic",C22,CC 0402 (1005 metric) SMALL,1
+18pF,"Capacitor, Multi Layer Ceramic","C27, C33",CC 0402 (1005 metric) SMALL,2
+JJ 19735 10p M,Daisy SMD Connector 10p M 4U-197354,"D10, D11, D12, D13, D14, D15, D16",197354Ucon 10pin smt,7
+Led GREEN 0603,LED Light-emitting diode,"DL1, DL2, DL3, DL4, DL5, DL6, DL7",DL 0603 (1608 metric) GREEN,7
+B320A,Schottky Diode,"DS1, DS2, DS3",DD SMA,3
+FU MF-MSMF110 4532,Bourns Fuse 0.5A 3225,F1,LL 1812 (4532 metric),1
+JJ HDR1X6 6mm M,"Header, 6-Pin",J1,HDR1X6 3D,1
+JJ USB A,USB 2.0 type A,"J2, J4, J5",USB2.0-4H4 3D FOX,3
+JJ RJLD260TC1 ETH,ETH connector RJLD-260TC1 TAIMAG,J3,RJLD-260TC1,1
+JJ TRANSFLASH,Transflash Socket,J6,microSD Socket,1
+JJ RP-SMA,Connector RP-SMA,J8,RP SMA Right angle,1
+JJ SIM CARD,Connector for SIM Card. 6 pin,J9,SIM CONNECTOR,1
+JJ A-DC 2mm1 Center,,J13,JJ JACK 2.1mm,1
+LF 221 0805 2A,Ferrite 220 Ohm 2A 0805,"L1, L2, L3, L4, L5, L6, L8",LL 0805 (2012 metric),7
+22uH 10mm 2A,Power inductor 22uH 10x10mm 2A,L7,LL SB82464Z4 and SRR7045,1
+2uH2,Power inductor 2uH2 0805,"L9, L10",LL 0805 (2012 metric),2
+Murata DLP11SN900HL2L,Common Mode Choke Coil Film Type,"LC1, LC2, LC3",LC 0504 (1210 metric),3
+Murata DLW5BTN102SQ2L,Common Mode Choke Coil Film Type,LC4,LC 2020 (5050 metric),1
+QN SOT23,NPN General Purpose Transistor BC846,"Q1, Q2, Q3",SOT23 for IRLML6402,3
+4k7,Resistor,"R1, R6, R7, R14, R15, R22, R23",RR 0402 (1005 metric) SMALL,7
+0 Ohm,Resistor,"R2, R18, R35",RR 0402 (1005 metric) SMALL,3
+100 Ohm,Resistor,"R3, R4, R5",RR 0402 (1005 metric) SMALL,3
+1k,Resistor,"R8, R9, R10, R11, R21, R24, R31, R38, R39, R40, R41",RR 0402 (1005 metric) SMALL,11
+5k6,Resistor,"R12, R13",RR 0402 (1005 metric) SMALL,2
+10k,Resistor,"R16, R17, R19, R20",RR 0402 (1005 metric) SMALL,4
+332k 0603 1%,Resistor,R25,RR 0603 (1608 metric),1
+10k 0603 1%,Resistor,R26,RR 0603 (1608 metric),1
+0 Ohm,Resistor,R27,RR 0805 (2012 metric),1
+68k1 0603 1%,Resistor,R28,RR 0603 (1608 metric),1
+16k9 0603 1%,Resistor,R29,RR 0603 (1608 metric),1
+1k87 0603 1%,Resistor,R30,RR 0603 (1608 metric),1
+1M 1%,Resistor,R32,RR 0402 (1005 metric) SMALL,1
+100k,Resistor,R33,RR 0402 (1005 metric) SMALL,1
+220k 1%,Resistor,R34,RR 0402 (1005 metric) SMALL,1
+26k1 0603 1%,Resistor,R37,RR 0603 (1608 metric),1
+470k 1%,Resistor,R42,RR 0402 (1005 metric) SMALL,1
+75k 1%,Resistor,R43,RR 0402 (1005 metric) SMALL,1
+1k5,Resistor,R44,RR 0402 (1005 metric) SMALL,1
+0 Ohm,Resistor,"R47, R48",RR 0402 (1005 metric) SMALL,2
+10k,Resistor,R51,RR 0402 (1005 metric) SMALL,1
+ARIA,,U2,AB ARIA 1,1
+IC M95 Quectel,M95 Quectel quad-band GSM modem,U3,M95 QUECTEL,1
+AB Daisy 24,Daisy 24 module,U4,Daisy 24,1
+IC TPS54231D,DC-DC converter TPS54231D D008,U5,D008_L,1
+IC NCP1529,"1.7MHz, 1A, High Efficiency, Low Ripple, Adjustable Output Voltage Step-down Converter","U6, U8",IC SOT23-5,2
+IC MAX1564 DS,Triple 1.2A USB Switch in 4mm x 4mm,U7,IC 16 TQFN-EP,1

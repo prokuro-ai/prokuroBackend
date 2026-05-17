@@ -1,0 +1,98 @@
+Reference,Value,MPN,Footprint,LCSC_Part,Manufacturer,Description,Stage,Qty,Stock,Price_USD,Status,URL,Notes
+Q1,PMV45EN2R,PMV45EN2R,,C2976873,,P-MOSFET VDS=-40V ID=-3A protecao inversao polaridade,0,1,0,,not_found,https://www.lcsc.com/product-detail/C2976873.html,Substitui SI2359DS. |VDS|=40V obrigatorio (TVS clamp 35.5V). R_GATE 10k ao GND
+R_GATE,10k,RC0402FR-0710KL,,C25741,UNI-ROYAL,Pull-down gate Q1 -> GND,0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25741.html,
+F1,MF-MSMF300-2,MF-MSMF300-2,,C383507,,PTC Polyfuse 3A/30V 1812 resetavel,0,1,0,,not_found,https://www.lcsc.com/product-detail/C383507.html,Protecao sobrecorrente V_BATT
+TVS1,SMDJ22A,SMDJ22A,,C4154722,TWGMC,TVS 22V/1500W load dump clamp 35.5V (ISO7637-2),0,1,1830,0.0897,in_stock,https://www.lcsc.com/product-detail/C4154722.html,Unidirecional: anodo->GND catodo->VBATT_PROT
+L1,10uH/4A,SWPA6028S100MT,,C408444,,Indutor shielded 10uH/4A filtro ENTRADA Buck (NAO chaveamento),0,1,0,,not_found,https://www.lcsc.com/product-detail/C408444.html,DIFERENTE do L_SW (Buck switch). Faz par PI com C1 para atenuar ISO7637 pulsos 1/2/3
+C1,100uF/50V,EEEFP1H101AP,,C428637,,Polymer cap 100uF/50V bulk entrada Buck,0,1,0,,not_found,https://www.lcsc.com/product-detail/C428637.html,Tensao 50V necessaria (TVS clamp 35.5V). Alt MLCC: verificar LCSC 100uF/50V 1210
+C_IN,100nF/100V X7R,CL05B104KO5NNNC,,C14663,YAGEO,MLCC 100nF 100V X7R 0402 decoupling VIN LMR14020,0,1,3540700,0.0015,in_stock,https://www.lcsc.com/product-detail/C14663.html,
+C_BOOT,100nF X7R,CL05B104KO5NNNC,,C14663,YAGEO,MLCC 100nF X7R 0402 bootstrap BOOT->SW LMR14020,0,1,3540700,0.0015,in_stock,https://www.lcsc.com/product-detail/C14663.html,
+U_BUCK,LMR14020,LMR14020SDDAR,,C187824,TI,Buck converter 40V/2A VOUT=5V fsw=1.5MHz SOT-23-6,0,1,6953,0.2477,in_stock,https://www.lcsc.com/product-detail/C187824.html,9x thermal vias pad GND + copper fill >=4cm2 obrigatorio
+L_SW,4.7uH/2A,SRR1260-4R7Y,,VERIFY_LCSC,,Indutor chaveamento Buck 4.7uH shielded (SW node -> saida),0,1,0,,error,,DIFERENTE de L1 (filtro entrada). Verificar LCSC. Alt: SWPA4020S4R7MT (Sunlord)
+R_BOOT_BK,100k 1%,RC0402FR-07100KL,,C25741,UNI-ROYAL,Feedback top LMR14020,0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25741.html,
+R_BOT_BK,18k 1%,RC0402FR-0718KL,,VERIFY_18K,,Feedback bot LMR14020 -> VOUT=5V. CORRIGIDO de 56.2k para 18k. VOUT=0.765*(1+100k/18k)=4.99V,0,1,0,,error,,Verificar LCSC part number para 18k 1% 0402. C25792 era 47k - buscar 18k
+C_BOUT1,22uF/10V X5R,CL31A226KAHNNNE,,C5403,,MLCC 22uF 10V X5R 1206 saida Buck bulk 1,0,1,0,,not_found,https://www.lcsc.com/product-detail/C5403.html,
+C_BOUT2,22uF/10V X5R,CL31A226KAHNNNE,,C5403,,MLCC 22uF 10V X5R 1206 saida Buck bulk 2,0,1,0,,not_found,https://www.lcsc.com/product-detail/C5403.html,
+C_BOUT3,100nF X7R,CL05B104KO5NNNC,,C14663,YAGEO,MLCC 100nF X7R 0402 bypass saida Buck media freq,0,1,3540700,0.0015,in_stock,https://www.lcsc.com/product-detail/C14663.html,
+C_BOUT4,10nF X7R,CC0402KRX7R9BB103,,C15849,Samsung Electro-Mechanics,MLCC 10nF X7R 0402 bypass saida Buck alta freq (NOVO),0,1,365350,0.0043,in_stock,https://www.lcsc.com/product-detail/C15849.html,Fecha impedancia >10MHz para harmonicas do chaveamento
+L_FILT,10uH/1A,SRR0604-100Y,,VERIFY_LCSC,,Indutor filtro pos-Buck antes do LDO 10uH shielded (NOVO),0,1,0,,error,,NOVO - era ausente. Alt: SWPA4020S100MT (Sunlord). 40dB atenuacao @1.5MHz
+C_FILT,10uF X5R,CL21A106KAYNNNE,,C96446,Samsung Electro-Mechanics,MLCC 10uF X5R 0805 cap saida filtro L_FILT (NOVO),0,1,1149200,0.0100,in_stock,https://www.lcsc.com/product-detail/C96446.html,NOVO - era ausente. Proximo ao VIN do AP2112K
+U_LDO,AP2112K-3.3,AP2112K-3.3TRG1,,C51118,DIODES,LDO 3.3V/600mA dropout 250mV SOT-23-5,0,1,169425,0.0865,in_stock,https://www.lcsc.com/product-detail/C51118.html,9x thermal vias GND + copper fill >=4cm2 OBRIGATORIO. P_max=0.68W em caixa fechada
+C_LDO_IN,1uF X5R,CL05A105KO5NNNC,,C52923,Samsung Electro-Mechanics,MLCC 1uF X5R 0402 entrada LDO,0,1,8429100,0.0024,in_stock,https://www.lcsc.com/product-detail/C52923.html,
+C_LDO_OUT,10uF X5R,CL21A106KAYNNNE,,C96446,Samsung Electro-Mechanics,MLCC 10uF X5R 0805 saida LDO,0,1,1149200,0.0100,in_stock,https://www.lcsc.com/product-detail/C96446.html,
+U_MCU,ESP32-WROOM-32E,ESP32-WROOM-32E,,C701342,ESPRESSIF,ESP32 dual-core 240MHz WiFi BLE 4MB flash antena PCB,0,1,7383,3.0504,in_stock,https://www.lcsc.com/product-detail/C701342.html,Keep-out antena 15x3mm obrigatorio. GPIO12 PULL-DOWN obrigatorio
+C_MCU1,10uF X5R,CL21A106KAYNNNE,,C96446,Samsung Electro-Mechanics,MLCC 10uF X5R 0805 decoupling ESP32 bulk lado A,0,1,1149200,0.0100,in_stock,https://www.lcsc.com/product-detail/C96446.html,
+C_MCU2,10uF X5R,CL21A106KAYNNNE,,C96446,Samsung Electro-Mechanics,MLCC 10uF X5R 0805 decoupling ESP32 bulk lado B,0,1,1149200,0.0100,in_stock,https://www.lcsc.com/product-detail/C96446.html,
+C_MCU3,100nF X7R,CL05B104KO5NNNC,,C14663,YAGEO,MLCC 100nF X7R 0402 bypass ESP32 VCC x2 (<2mm dos pinos),0,2,3540700,0.0015,in_stock,https://www.lcsc.com/product-detail/C14663.html,Qty=2
+R_GPIO0,10k,RC0402FR-0710KL,,C25741,UNI-ROYAL,Pull-UP GPIO0 -> +3V3 (BOOT mode strapping),0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25741.html,
+R_GPIO5,10k,RC0402FR-0710KL,,C25741,UNI-ROYAL,Pull-UP GPIO5 -> +3V3 (CAN_STB default=STANDBY. Firmware inicializa LOW),0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25741.html,HIGH=standby TCAN1044V
+R_GPIO12,10k,RC0402FR-0710KL,,C25741,UNI-ROYAL,PULL-DOWN GPIO12 -> GND OBRIGATORIO (HIGH=flash 1.8V=destruicao ESP32),0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25741.html,CRITICO: pull-DOWN nao pull-up!
+R_GPIO15,10k,RC0402FR-0710KL,,C25741,UNI-ROYAL,Pull-UP GPIO15 -> +3V3 (KLINE_TX idle high + strapping boot logs),0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25741.html,
+R_EN,10k,RC0402FR-0710KL,,C25741,UNI-ROYAL,Pull-UP EN ESP32 -> +3V3,0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25741.html,
+C_EN,1uF X5R,CL05A105KO5NNNC,,C52923,Samsung Electro-Mechanics,Filtro RC pino EN para reset limpo na energizacao,0,1,8429100,0.0024,in_stock,https://www.lcsc.com/product-detail/C52923.html,
+R_LED,330R,RC0402FR-07330RL,,C17738,UNI-ROYAL,Serie LED status GPIO2,0,1,0,0.0015,out_of_stock,https://www.lcsc.com/product-detail/C17738.html,
+LED1,LED verde 0402,19-217/GHC-YR1S2/3T,,C965812,XINGLIGHT,LED 0402 verde status GPIO2,0,1,2438000,0.0037,in_stock,https://www.lcsc.com/product-detail/C965812.html,Qualquer LED 0402 verde 2V/20mA funciona
+R_V1,100k,RC0402FR-07100KL,,C25741,UNI-ROYAL,Divisor VBATT top 100k -> GPIO34 ADC (CORRIGIDO: era GPIO36),0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25741.html,
+R_V2,22k 1%,RC0402FR-0722KL,,VERIFY_22K,,Divisor VBATT bot 22k -> GND. CORRIGIDO: era 10k. V_ADC=VBATT*0.18 (16V->2.88V),0,1,0,,error,,Verificar LCSC 22k 1% 0402. C25803 pode ser 20k - confirmar
+C_ADC,100nF,CL05B104KO5NNNC,,C14663,YAGEO,Filtro ADC VBATT entre GPIO34 e GND (NOVO),0,1,3540700,0.0015,in_stock,https://www.lcsc.com/product-detail/C14663.html,NOVO - reduz ruido de amostragem do ADC
+NTC1,10k B3950,NTC_0402_10k,,C4004475,VISHAY,NTC termistor 10k B=3950 0402 temperatura interna (GPIO36),0,1,0,4.6288,out_of_stock,https://www.lcsc.com/product-detail/C4004475.html,CORRIGIDO: era GPIO34. Agora GPIO36
+R_NTC,10k,RC0402FR-0710KL,,C25741,UNI-ROYAL,Pull-UP NTC -> +3V3 (GPIO36),0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25741.html,
+C_NTC,100nF,CL05B104KO5NNNC,,C14663,YAGEO,Filtro ADC NTC entre GPIO36 e GND (NOVO),0,1,3540700,0.0015,in_stock,https://www.lcsc.com/product-detail/C14663.html,NOVO
+R_S_H,10R,RC0402FR-0710RL,,C25744,UNI-ROYAL,Resistor SERIE CANH 10Ohm (NOVO - ERA AUSENTE),0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25744.html,NOVO CRITICO: limita corrente ESD + forma RC com PESD2CAN. Posicionar logo apos OBD2
+R_S_L,10R,RC0402FR-0710RL,,C25744,UNI-ROYAL,Resistor SERIE CANL 10Ohm (NOVO - ERA AUSENTE),0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25744.html,NOVO CRITICO: idem R_S_H. Posicionar logo apos OBD2
+TVS2,PESD2CAN,PESD2CAN,,C21713986,GOODWORK,ESD/TVS diferencial CAN +-8kV SOT-363,0,1,10500,0.0168,in_stock,https://www.lcsc.com/product-detail/C21713986.html,Posicionar imediatamente apos R_S_H/R_S_L na borda do PCB
+CMC1,ACM2012H-900-2P,ACM2012H-900-2P-T002,,C448605,TDK,Common Mode Choke 900Ohm@100MHz barramento CAN,0,1,4780,0.1124,in_stock,https://www.lcsc.com/product-detail/C448605.html,Entre PESD2CAN e ferrites FB1/FB2
+FB1,BLM21PG601SN1,BLM21PG601SN1D,,C21179,,Ferrite 600Ohm@100MHz 0805 CANH,0,1,0,,not_found,https://www.lcsc.com/product-detail/C21179.html,
+FB2,BLM21PG601SN1,BLM21PG601SN1D,,C21179,,Ferrite 600Ohm@100MHz 0805 CANL,0,1,0,,not_found,https://www.lcsc.com/product-detail/C21179.html,
+U_CAN,TCAN1044VDRQ1,TCAN1044VDRQ1,,C1852061,TI,CAN transceiver ISO11898-2 1Mbps 5V AEC-Q100,0,1,2660,0.2928,in_stock,https://www.lcsc.com/product-detail/C1852061.html,STB: HIGH=STANDBY (firmware inicializa GPIO5=LOW para operar)
+C_CAN_VCC,100nF X7R,CL05B104KO5NNNC,,C14663,YAGEO,Bypass VCC TCAN1044V,0,1,3540700,0.0015,in_stock,https://www.lcsc.com/product-detail/C14663.html,
+C_CAN_BULK,1uF X5R,CL05A105KO5NNNC,,C52923,Samsung Electro-Mechanics,Bulk VCC TCAN1044V,0,1,8429100,0.0024,in_stock,https://www.lcsc.com/product-detail/C52923.html,
+C_VREF,100nF X7R,CL05B104KO5NNNC,,C14663,YAGEO,Cap VREF pino8 TCAN1044V -> GND,0,1,3540700,0.0015,in_stock,https://www.lcsc.com/product-detail/C14663.html,
+R_CAN_G1,10k,RC0402FR-0710KL,,C25741,UNI-ROYAL,Divisor RXD CAN top 10k (TCAN RXD 5V -> GPIO19 3.3V),0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25741.html,
+R_CAN_G2,20k,RC0402FR-0720KL,,C25803,UNI-ROYAL,Divisor RXD CAN bot 20k (GPIO19 -> GND). V_GPIO19=3.33V,0,1,0,0.0008,out_of_stock,https://www.lcsc.com/product-detail/C25803.html,CORRIGIDO de 20k para confirmar: V=5V*20k/30k=3.33V OK
+Q4,BSS138,BSS138LT1G,,C49435659,Huixin,N-MOSFET chave terminacao CAN controlado por GPIO25,0,1,2750,0.0232,in_stock,https://www.lcsc.com/product-detail/C49435659.html,
+R_TERM,120R 1%,RC0402FR-07120RL,,C25779,UNI-ROYAL,Terminacao CAN 120Ohm 1% 0402,0,1,268700,0.0006,in_stock,https://www.lcsc.com/product-detail/C25779.html,
+R_TERM_G,10k,RC0402FR-0710KL,,C25741,UNI-ROYAL,Pull-DOWN gate Q4 -> GND (terminacao desativada por default),0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25741.html,NOVO: pull-down garante Q4 OFF por default
+U_KLINE,L9637D,L9637D,,C153038,ST,K-Line transceiver ISO9141 KWP2000 SO-8 5V,0,1,1035,0.9960,in_stock,https://www.lcsc.com/product-detail/C153038.html,Componente legado — verificar estoque C153038. Alt: MC33290 NXP
+C_K_VCC,10uF X5R,CL21A106KAYNNNE,,C96446,Samsung Electro-Mechanics,Bulk VCC L9637D 10uF (NOVO - ERA AUSENTE),0,1,1149200,0.0100,in_stock,https://www.lcsc.com/product-detail/C96446.html,NOVO CRITICO: sem este bulk o L9637D pode oscilar na linha K
+C_K_BYP,100nF X7R,CL05B104KO5NNNC,,C14663,YAGEO,Bypass VCC L9637D 100nF,0,1,3540700,0.0015,in_stock,https://www.lcsc.com/product-detail/C14663.html,
+U_LS1,74LVC1T45GW,74LVC1T45GW126,,C478004,Nexperia,Level shifter 3.3V->5V KLINE TX (GPIO15->L9637D TXD),0,1,3685,0.1581,in_stock,https://www.lcsc.com/product-detail/C478004.html,
+TVS3,SMCJ24A,SMCJ24A,,C42440493,TECH PUBLIC,TVS 24V/1500W SMC K-Line protecao (substituiu P6KE24A THT),0,1,5635,0.0558,in_stock,https://www.lcsc.com/product-detail/C42440493.html,
+R_K,100R,RC0402FR-07100RL,,C104,,Serie K-LINE 100Ohm limitador corrente,0,1,0,,not_found,https://www.lcsc.com/product-detail/C104.html,
+R_KPU_A,510R,RC0402FR-07510RL,,C27522,,Pull-up K-Line KBAT=VBATT modo veiculo ISO9141,0,1,0,,not_found,https://www.lcsc.com/product-detail/C27522.html,Jumper selecionavel posicao A
+R_KPU_B,1k,RC0402FR-071KL,,C21190,UNI-ROYAL,Pull-up K-Line KBAT=5V modo bancada/debug,0,1,13950800,0.0009,in_stock,https://www.lcsc.com/product-detail/C21190.html,Jumper selecionavel posicao B
+R_EN_K,10k,RC0402FR-0710KL,,C25741,UNI-ROYAL,Pull-UP EN L9637D -> +5V (sempre habilitado),0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25741.html,
+U_GNSS,NEO-M9N-00B,NEO-M9N-00B,,GLOBAL_SOURCING,,GNSS 10Hz LGA-24 GPS/GLONASS/Galileo/BeiDou,0,1,0,,error,,NAO na LCSC. JLCPCB Global Sourcing ou consignment. MPN: NEO-M9N-00B
+FB_GNSS,BLM21PG601SN1,BLM21PG601SN1D,,C21179,,Ferrite 600Ohm@100MHz isolamento VCC GNSS,0,1,0,,not_found,https://www.lcsc.com/product-detail/C21179.html,
+C_GNSS_BULK,10uF X5R,CL21A106KAYNNNE,,C96446,Samsung Electro-Mechanics,Bulk VCC GNSS 10uF (NOVO - ERA AUSENTE),0,1,1149200,0.0100,in_stock,https://www.lcsc.com/product-detail/C96446.html,NOVO CRITICO: sem bulk o GNSS tem dropout no cold-start
+C_GNSS_100N,100nF X7R,CL05B104KO5NNNC,,C14663,YAGEO,Bypass VCC GNSS 100nF (<0.5mm do pino VCC),0,1,3540700,0.0015,in_stock,https://www.lcsc.com/product-detail/C14663.html,
+C_GNSS_10N,10nF X7R NP0,CC0402JRNPO9BN103,,C15849,Samsung Electro-Mechanics,Bypass VCC_IO GNSS 10nF alta freq (NOVO),0,1,365350,0.0043,in_stock,https://www.lcsc.com/product-detail/C15849.html,NOVO - usar NP0/C0G para estabilidade em RF. <0.5mm do pino VCC_IO
+L_BIAS,47nH RF,VERIFY_47NH,,VERIFY_LCSC,,Indutor RF Bias-T antena ativa 47nH 0402 (NOVO),0,1,0,,error,,NOVO: Bias-T para antena patch ativa. Alt: Wurth 744777047A. Verificar LCSC
+C_BLOCK,100pF NP0,CC0402JRNPO9BN101,,C14858,Samsung Electro-Mechanics,DC-block RF Bias-T 100pF NP0 0402 (NOVO),0,1,4651400,0.0022,in_stock,https://www.lcsc.com/product-detail/C14858.html,NOVO: NP0/C0G obrigatorio (estabilidade em 1575MHz). DC-block RF_IN GNSS
+R_PPS,100R,RC0402FR-07100RL,,C104,,Serie GNSS PPS -> GPIO35 (protecao ESD) (NOVO),0,1,0,,not_found,https://www.lcsc.com/product-detail/C104.html,NOVO - era ausente. GPIO35=GNSS_PPS
+D_BAT,1N5819WS,1N5819WS,,C8681,JRC,Schottky 1A/40V SOD-323 carga supercap GNSS backup,0,1,0,,out_of_stock,https://www.lcsc.com/product-detail/C8681.html,
+R_BAT,100R,RC0402FR-07100RL,,C104,,Limitador corrente carga supercap BAT1,0,1,0,,not_found,https://www.lcsc.com/product-detail/C104.html,
+BAT1,0.1F/5.5V,CPX3225A,,VERIFY_LCSC,,Supercap backup GNSS RTC 0.1F 5.5V SMD 3.2x2.5mm,0,1,0,,error,,Verificar disponibilidade LCSC. Buscar: 0.1F 5.5V SMD supercap 3225
+J_ANT,U.FL,U.FL-R-SMT-1,,C381116,XKB Connection,Conector U.FL 50Ohm antena GNSS externa SMD,0,1,1875,0.1266,in_stock,https://www.lcsc.com/product-detail/C381116.html,Trilha 50Ohm microstrip 0.34mm (<10mm comprimento)
+J_SD,MicroSD,MK-SD-CONN,,C780928,YANGJIE,Slot MicroSD push-push SMD horizontal,0,1,0,0.0431,out_of_stock,https://www.lcsc.com/product-detail/C780928.html,GPIO4=CS GPIO13=MOSI GPIO14=CLK GPIO23=MISO
+C_SD_BULK,10uF X5R,CL21A106KAYNNNE,,C96446,Samsung Electro-Mechanics,Bulk VDD MicroSD,0,1,1149200,0.0100,in_stock,https://www.lcsc.com/product-detail/C96446.html,
+C_SD_BYP,100nF X7R,CL05B104KO5NNNC,,C14663,YAGEO,Bypass VDD MicroSD,0,1,3540700,0.0015,in_stock,https://www.lcsc.com/product-detail/C14663.html,
+R_SD_CS,10k,RC0402FR-0710KL,,C25741,UNI-ROYAL,Pull-UP SD_CS GPIO4 -> +3V3,0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25741.html,CORRIGIDO: era GPIO27 agora GPIO4 conforme Engineering Guide
+ESD1,PRTR5V0U2X,PRTR5V0U2X,,C53446675,R+O,ESD 2 canais header expansao I2C/GPIO,0,1,8695,0.0430,in_stock,https://www.lcsc.com/product-detail/C53446675.html,
+ESD2,PRTR5V0U2X,PRTR5V0U2X,,C53446675,R+O,ESD 2 canais header expansao GPIO,0,1,8695,0.0430,in_stock,https://www.lcsc.com/product-detail/C53446675.html,
+R_I2C_SDA,4k7,RC0402FR-074K7L,,C25900,UNI-ROYAL,Pull-UP I2C SDA GPIO21 -> +3V3,0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25900.html,
+R_I2C_SCL,4k7,RC0402FR-074K7L,,C25900,UNI-ROYAL,Pull-UP I2C SCL GPIO22 -> +3V3,0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25900.html,
+U_USB,CP2102N,CP2102N-A02-GQFN28R,,C6568,SILICON LABS,USB-UART bridge QFN-28 auto-programacao,0,1,24923,1.4313,in_stock,https://www.lcsc.com/product-detail/C6568.html,Verificar disponibilidade C6568. Alt SOIC-28: CP2102-GMR
+C_USB_VDD,100nF X7R,CL05B104KO5NNNC,,C14663,YAGEO,Bypass VDD CP2102N,0,1,3540700,0.0015,in_stock,https://www.lcsc.com/product-detail/C14663.html,
+C_USB_BULK,10uF X5R,CL21A106KAYNNNE,,C96446,Samsung Electro-Mechanics,Bulk VDD CP2102N,0,1,1149200,0.0100,in_stock,https://www.lcsc.com/product-detail/C96446.html,
+C_REGIN,1uF X5R,CL05A105KO5NNNC,,C52923,Samsung Electro-Mechanics,Cap regulador interno CP2102N REGIN pin,0,1,8429100,0.0024,in_stock,https://www.lcsc.com/product-detail/C52923.html,
+C_VBUS,10uF X5R,CL21A106KAYNNNE,,C96446,Samsung Electro-Mechanics,Debounce VBUS USB deteccao,0,1,1149200,0.0100,in_stock,https://www.lcsc.com/product-detail/C96446.html,
+FB_USB,BLM21PG601SN1,BLM21PG601SN1D,,C21179,,Ferrite 600Ohm@100MHz filtra ruido VBUS USB,0,1,0,,not_found,https://www.lcsc.com/product-detail/C21179.html,
+Q2,BC817-40LT1G,BC817-40LT1G,,C22400355,ALJ,NPN BJT auto-prog DTR -> GPIO0,0,1,3000,0.0057,in_stock,https://www.lcsc.com/product-detail/C22400355.html,
+Q3,BC817-40LT1G,BC817-40LT1G,,C22400355,ALJ,NPN BJT auto-prog RTS -> EN,0,1,3000,0.0057,in_stock,https://www.lcsc.com/product-detail/C22400355.html,
+R_DTR,10k,RC0402FR-0710KL,,C25741,UNI-ROYAL,Resistor base Q2 DTR->GPIO0,0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25741.html,
+R_RTS,10k,RC0402FR-0710KL,,C25741,UNI-ROYAL,Resistor base Q3 RTS->EN,0,1,0,0.0005,out_of_stock,https://www.lcsc.com/product-detail/C25741.html,
+C_DTR,100nF X7R,CL05B104KO5NNNC,,C14663,YAGEO,Diferenciador pulso GPIO0 coletor Q2 (NOVO - ERA AUSENTE),0,1,3540700,0.0015,in_stock,https://www.lcsc.com/product-detail/C14663.html,NOVO CRITICO: sem este cap ha reset loop durante comunicacao serial
+C_RTS,100nF X7R,CL05B104KO5NNNC,,C14663,YAGEO,Diferenciador pulso EN coletor Q3 (NOVO - ERA AUSENTE),0,1,3540700,0.0015,in_stock,https://www.lcsc.com/product-detail/C14663.html,NOVO CRITICO: cria pulso de reset ~1ms em vez de manter EN LOW
+J_USB,USB Micro-B SMD,USB_MICRO_B,,C10418,Jing Extension of the Electronic Co.,Conector USB Micro-B SMD programacao/debug,0,1,36725,0.0396,in_stock,https://www.lcsc.com/product-detail/C10418.html,
+J1,OBD2 J1962 THT,OBD2_16P_THT,,NOT_PCBA,,Conector OBD2 macho J1962 16 pinos THT,0,1,0,,error,,NAO incluir no PCBA JLCPCB. Soldar manualmente. AliExpress: OBD2 male PCB connector THT
