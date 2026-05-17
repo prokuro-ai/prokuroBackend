@@ -1,0 +1,49 @@
+{
+  "data": {
+    "supMultiMatch": [
+      {
+        "hits": [
+          {
+            "part": {
+              "mpn": "GRM188R71H104KA93D",
+              "manufacturer": {
+                "name": "Murata"
+              },
+              "totalAvail": 125340,
+              "manufacturerProductUrl": "https://www.murata.com/en-us/products/productdetail?partno=GRM188R71H104KA93D",
+              "lifecycleStatus": "Active",
+              "medianPrice1000": {
+                "price": 0.0061,
+                "currency": "USD"
+              },
+              "sellers": [
+                {
+                  "company": {
+                    "name": "Digi-Key"
+                  },
+                  "offers": [
+                    {
+                      "inventoryLevel": 84320,
+                      "factoryLeadDays": 14
+                    }
+                  ]
+                },
+                {
+                  "company": {
+                    "name": "Mouser"
+                  },
+                  "offers": [
+                    {
+                      "inventoryLevel": 41020,
+                      "factoryLeadDays": 21
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
