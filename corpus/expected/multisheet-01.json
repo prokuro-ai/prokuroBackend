@@ -1,0 +1,16 @@
+{
+  "headerRowIndex": 0,
+  "sheetName": "BOM",
+  "delimiter": null,
+  "columnMapping": {
+    "Reference": "reference",
+    "Qty": "qty",
+    "Value": "value",
+    "Manufacturer": "manufacturer",
+    "MPN": "mpn",
+    "Footprint": "footprint",
+    "Digi-Key PN": "digikey_pn",
+    "Description": "description"
+  },
+  "notes": "Manually crafted XLSX fixture. Sheet 'Notes' (index 0) contains free-text project metadata and must be skipped. Sheet 'BOM' (index 1) is the data sheet. 10 rows with real Murata, TDK, Yageo, Microchip, FTDI, Wurth, Vishay, Molex, C&K MPNs."
+}

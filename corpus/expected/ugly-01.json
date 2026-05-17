@@ -1,0 +1,14 @@
+{
+  "headerRowIndex": 2,
+  "sheetName": null,
+  "delimiter": ",",
+  "columnMapping": {
+    "Count": "qty",
+    "Reference": "reference",
+    "Description": "description",
+    "Mfg Part #": "mpn",
+    "Digi-Key PN": "digikey_pn",
+    "Voltage Rating": "voltage_rating"
+  },
+  "notes": "Manually crafted ugly fixture. Rows 0-1 are free-text title rows exported from Altium Designer. Header is on row index 2. 'Mfg Part #' is a non-standard synonym for MPN; 'Count' is a non-standard synonym for Qty. Row 5 (U1) has a Digi-Key SKU (296-1386-1-ND) in the MPN field — a real-world data quality issue. Row 6 (LED1 LED2) has an empty MPN but a populated description and Digi-Key PN."
+}

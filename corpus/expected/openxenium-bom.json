@@ -1,0 +1,14 @@
+{
+  "headerRowIndex": 0,
+  "sheetName": null,
+  "delimiter": ",",
+  "columnMapping": {
+    "Reference": "reference",
+    "Qty": "qty",
+    "Description": "description",
+    "Part Number": "mpn",
+    "Manufacturer": "manufacturer",
+    "Digikey": "digikey_pn"
+  },
+  "notes": "OpenXenium open-source Xbox CPLD modchip BOM. Clean comma-delimited format. Real Xilinx, Cypress, Everlight, JST MPNs with Digikey part numbers."
+}

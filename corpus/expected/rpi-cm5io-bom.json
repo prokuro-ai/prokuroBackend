@@ -1,0 +1,14 @@
+{
+  "headerRowIndex": 0,
+  "sheetName": null,
+  "delimiter": ";",
+  "columnMapping": {
+    "Id": "id",
+    "Designator": "reference",
+    "Footprint": "footprint",
+    "Quantity": "qty",
+    "Designation": "value",
+    "Supplier and ref": "supplier_ref"
+  },
+  "notes": "Official Raspberry Pi CM5 IO Board KiCad BOM. Semicolon-delimited, headers are double-quoted. Designation column contains component values and in some rows real MPNs (e.g. TPD4EUSB30, AP3441SHE-7B). Trailing empty column from trailing semicolon."
+}
