@@ -4,6 +4,7 @@ use crate::detect::header::find_header_row;
 use crate::detect::sheet::select_sheet;
 use crate::detect::synonyms::default_synonyms;
 use crate::ingest::csv::read_csv;
+use crate::ingest::ParseError as IngestParseError;
 use crate::ingest::xlsx::read_xlsx;
 use crate::map::columns::{map_columns, ColumnMapping};
 use crate::map::{ParseWarning, WarningCode};
@@ -42,10 +43,12 @@ pub struct ParseResult {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
-    #[error("unsupported file format: only .csv and .xlsx are accepted")]
+    #[error("Only .csv and .xlsx files are supported. Please export your BOM from your ERP or CAD tool as one of these formats.")]
     UnsupportedFormat,
-    #[error("file appears to be empty or has no parseable header")]
+    #[error("We couldn't find a component table in this file. Make sure the file contains columns for part numbers and quantities.")]
     EmptyFile,
+    #[error("File encoding not supported. Please save your BOM as UTF-8 CSV or .xlsx format.")]
+    EncodingError,
     #[error("internal error: {0}")]
     InternalError(String),
 }
@@ -60,7 +63,10 @@ pub async fn parse_file(bytes: &[u8], filename: &str) -> Result<ParseResult, Par
 
     let (grid, sheet_name) = match ext.as_str() {
         "csv" => {
-            let grid = read_csv(bytes).map_err(|e| ParseError::InternalError(e.to_string()))?;
+            let grid = read_csv(bytes).map_err(|error| match error {
+                IngestParseError::EncodingError(_) => ParseError::EncodingError,
+                other => ParseError::InternalError(other.to_string()),
+            })?;
             (grid, None)
         }
         "xlsx" => {
@@ -82,7 +88,9 @@ pub async fn parse_file(bytes: &[u8], filename: &str) -> Result<ParseResult, Par
 
     let header_row_index = find_header_row(&grid, &synonyms).ok_or(ParseError::EmptyFile)?;
     let header = grid[header_row_index].clone();
-    let (column_mapping, mapping_confidence, mut warnings) = map_columns(&header, &synonyms);
+    let (column_mapping, mapping_confidence, mut warnings, column_offset) =
+        map_columns(&header, &synonyms);
+    let mapped_header: Vec<String> = header.iter().skip(column_offset).cloned().collect();
 
     let data_rows: Vec<Vec<String>> = grid.into_iter().skip(header_row_index + 1).collect();
     let hit_limit = data_rows.len() > ROW_LIMIT;
@@ -94,7 +102,9 @@ pub async fn parse_file(bytes: &[u8], filename: &str) -> Result<ParseResult, Par
     for (offset, raw) in data_rows.into_iter().take(ROW_LIMIT).enumerate() {
         total_rows += 1;
         let row_index = header_row_index + 1 + offset;
-        let (line, row_warnings) = normalize_row(&raw, &column_mapping, &header, row_index);
+        let shifted_raw: Vec<String> = raw.iter().skip(column_offset).cloned().collect();
+        let (line, row_warnings) =
+            normalize_row(&shifted_raw, &column_mapping, &mapped_header, row_index);
         warnings.extend(row_warnings);
         match line {
             Some(l) => lines.push(l),
@@ -107,6 +117,16 @@ pub async fn parse_file(bytes: &[u8], filename: &str) -> Result<ParseResult, Par
             code: WarningCode::RowLimitExceeded,
             row_index: ROW_LIMIT,
             column: None,
+            message: None,
+        });
+    }
+
+    if mapping_confidence < 0.5 {
+        warnings.push(ParseWarning {
+            code: WarningCode::LowMappingConfidence,
+            row_index: header_row_index,
+            column: None,
+            message: Some("We had trouble identifying your BOM columns. Consider renaming headers to standard names like MPN, Manufacturer, Qty, RefDes.".to_string()),
         });
     }
 

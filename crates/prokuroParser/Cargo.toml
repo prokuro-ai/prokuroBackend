@@ -21,6 +21,7 @@ serde = { version = "*", features = ["derive"] }
 serde_json = "*"
 calamine = "*"
 csv = "*"
+encoding_rs = "*"
 strsim = "*"
 thiserror = "*"
 toml = "*"

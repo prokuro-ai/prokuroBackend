@@ -138,12 +138,17 @@ async fn parse_handler(mut multipart: Multipart) -> impl IntoResponse {
         Ok(result) => Json(result).into_response(),
         Err(ParseError::UnsupportedFormat) => (
             StatusCode::BAD_REQUEST,
-            Json(json!({"error": "unsupported format: only .csv and .xlsx are accepted"})),
+            Json(json!({"error": ParseError::UnsupportedFormat.to_string()})),
         )
             .into_response(),
         Err(ParseError::EmptyFile) => (
             StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({"error": "file appears to be empty or has no parseable header"})),
+            Json(json!({"error": ParseError::EmptyFile.to_string()})),
+        )
+            .into_response(),
+        Err(ParseError::EncodingError) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"error": ParseError::EncodingError.to_string()})),
         )
             .into_response(),
         Err(ParseError::InternalError(msg)) => (

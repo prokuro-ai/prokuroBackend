@@ -8,6 +8,8 @@ pub mod xlsx;
 pub enum ParseError {
     #[error("csv parse error: {0}")]
     Csv(#[from] ::csv::Error),
+    #[error("encoding error: {0}")]
+    EncodingError(String),
     #[error("xlsx parse error: {0}")]
     Xlsx(#[from] ::calamine::XlsxError),
     #[error("{0}")]

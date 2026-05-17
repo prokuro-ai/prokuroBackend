@@ -52,7 +52,12 @@ pub fn normalize_row(
 
     // Uppercase and check MPN
     let (mpn, aml_candidates) = if mpn_raw.is_empty() {
-        warnings.push(ParseWarning { code: WarningCode::MissingMpn, row_index, column: None });
+        warnings.push(ParseWarning {
+            code: WarningCode::MissingMpn,
+            row_index,
+            column: None,
+            message: None,
+        });
         (None, vec![])
     } else {
         let upper = mpn_raw.to_uppercase();
@@ -78,6 +83,7 @@ pub fn normalize_row(
                 code: WarningCode::DistSkuSuspect,
                 row_index,
                 column: Some("mpn".to_string()),
+                message: None,
             });
         }
 
@@ -120,7 +126,7 @@ mod tests {
     fn headers_and_mapping(cols: &[&str]) -> (Vec<String>, crate::map::columns::ColumnMapping) {
         let header: Vec<String> = cols.iter().map(|s| s.to_string()).collect();
         let synonyms = default_synonyms();
-        let (mapping, _, _) = map_columns(&header, &synonyms);
+        let (mapping, _, _, _) = map_columns(&header, &synonyms);
         (header, mapping)
     }
 

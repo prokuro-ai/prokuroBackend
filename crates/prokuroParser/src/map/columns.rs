@@ -32,11 +32,12 @@ const ALT_MPN: &[&str] = &["alt mpn", "alternate part", "second source", "alt pa
 pub fn map_columns(
     header_row: &[String],
     synonyms: &[Vec<String>],
-) -> (ColumnMapping, f32, Vec<ParseWarning>) {
+) -> (ColumnMapping, f32, Vec<ParseWarning>, usize) {
     let mut mapping = ColumnMapping::new();
     let mut warnings = Vec::new();
+    let column_offset = detect_column_offset(header_row);
 
-    for header in header_row {
+    for header in header_row.iter().skip(column_offset) {
         let norm = header.trim().to_lowercase();
         if norm.is_empty() {
             continue;
@@ -47,6 +48,7 @@ pub fn map_columns(
                 code: WarningCode::DistSkuSuspect,
                 row_index: 0,
                 column: Some(header.clone()),
+                message: None,
             });
             continue;
         }
@@ -104,10 +106,18 @@ pub fn map_columns(
             code: WarningCode::LowMappingConfidence,
             row_index: 0,
             column: None,
+            message: None,
         });
     }
 
-    (mapping, confidence, warnings)
+    (mapping, confidence, warnings, column_offset)
+}
+
+pub fn detect_column_offset(header_row: &[String]) -> usize {
+    header_row
+        .iter()
+        .position(|header| !header.trim().is_empty())
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -136,7 +146,7 @@ mod tests {
         let headers = &grid[0]; // headerRowIndex = 0
         let synonyms = default_synonyms();
 
-        let (mapping, confidence, warnings) = map_columns(headers, &synonyms);
+        let (mapping, confidence, warnings, _) = map_columns(headers, &synonyms);
 
         assert_eq!(mapping.get("Reference").map(String::as_str), Some("refdes"));
         assert_eq!(mapping.get("Qty").map(String::as_str), Some("qty"));
@@ -153,7 +163,7 @@ mod tests {
         let headers = vec!["Mfgr Part #".to_string()];
         let synonyms = default_synonyms();
 
-        let (mapping, _, _) = map_columns(&headers, &synonyms);
+        let (mapping, _, _, _) = map_columns(&headers, &synonyms);
 
         assert_eq!(mapping.get("Mfgr Part #").map(String::as_str), Some("mpn"));
     }
@@ -163,7 +173,7 @@ mod tests {
         let headers = vec!["Digi-Key PN".to_string(), "mpn".to_string()];
         let synonyms = default_synonyms();
 
-        let (mapping, _, warnings) = map_columns(&headers, &synonyms);
+        let (mapping, _, warnings, _) = map_columns(&headers, &synonyms);
 
         assert!(!mapping.contains_key("Digi-Key PN"));
         assert_eq!(mapping.get("mpn").map(String::as_str), Some("mpn"));
@@ -177,7 +187,7 @@ mod tests {
         let headers = vec!["mpn".to_string(), "manufacturer".to_string()];
         let synonyms = default_synonyms();
 
-        let (_, confidence, warnings) = map_columns(&headers, &synonyms);
+        let (_, confidence, warnings, _) = map_columns(&headers, &synonyms);
 
         // 0.4 + 0.3 = 0.7
         assert!((confidence - 0.7).abs() < 0.001);
@@ -189,7 +199,7 @@ mod tests {
         let headers = vec!["qty".to_string()];
         let synonyms = default_synonyms();
 
-        let (_, confidence, warnings) = map_columns(&headers, &synonyms);
+        let (_, confidence, warnings, _) = map_columns(&headers, &synonyms);
 
         // 0.15 < 0.6
         assert!((confidence - 0.15).abs() < 0.001);
@@ -201,9 +211,26 @@ mod tests {
         let headers = vec!["Alt MPN".to_string(), "mpn".to_string()];
         let synonyms = default_synonyms();
 
-        let (mapping, _, _) = map_columns(&headers, &synonyms);
+        let (mapping, _, _, _) = map_columns(&headers, &synonyms);
 
         assert_eq!(mapping.get("Alt MPN").map(String::as_str), Some("alternate_mpn"));
         assert_eq!(mapping.get("mpn").map(String::as_str), Some("mpn"));
+    }
+
+    #[test]
+    fn detects_column_offset_for_shifted_headers() {
+        let headers = vec![
+            "".to_string(),
+            " ".to_string(),
+            "".to_string(),
+            "MPN".to_string(),
+            "Manufacturer".to_string(),
+        ];
+        let synonyms = default_synonyms();
+        let (mapping, _, _, column_offset) = map_columns(&headers, &synonyms);
+
+        assert_eq!(column_offset, 3);
+        assert_eq!(mapping.get("MPN").map(String::as_str), Some("mpn"));
+        assert_eq!(mapping.get("Manufacturer").map(String::as_str), Some("manufacturer"));
     }
 }

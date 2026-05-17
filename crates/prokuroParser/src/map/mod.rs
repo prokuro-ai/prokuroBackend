@@ -16,4 +16,5 @@ pub struct ParseWarning {
     pub code: WarningCode,
     pub row_index: usize,
     pub column: Option<String>,
+    pub message: Option<String>,
 }

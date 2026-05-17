@@ -6,6 +6,7 @@ use super::ParseError;
 
 #[allow(clippy::type_complexity)]
 pub fn read_xlsx(bytes: &[u8]) -> Result<Vec<(String, Vec<Vec<String>>)>, ParseError> {
+    // calamine handles XLSX string encodings (including UTF-16 XML internals) natively.
     let cursor = Cursor::new(bytes.to_vec());
     let mut workbook: Xlsx<_> = open_workbook_from_rs(cursor).map_err(map_xlsx_error)?;
 
