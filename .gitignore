@@ -14,3 +14,9 @@ rust-best-practices/
 crates/prokuroEnrichment/src/nexar/fixtures/
 crates/prokuroEnrichment/tests/fixtures/nexar/
 corpus/reports/
+
+# data scraping for BOMs
+bom_harvest.py.save
+bom_harvest.py
+bom_data/
+# ^ this stuff is the FAT files that we scraped from Github
