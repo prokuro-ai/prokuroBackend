@@ -1,13 +1,17 @@
 pub mod columns;
 
-#[derive(Debug, Clone, PartialEq)]
+use serde::Serialize;
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum WarningCode {
     LowMappingConfidence,
     DistSkuSuspect,
     MissingMpn,
+    RowLimitExceeded,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ParseWarning {
     pub code: WarningCode,
     pub row_index: usize,

@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 
+use serde::Serialize;
+
 use crate::map::columns::ColumnMapping;
 use crate::map::{ParseWarning, WarningCode};
 
 // Distributor SKU prefixes (Digi-Key, Mouser, Newark, Arrow, etc.)
 const DIST_PREFIXES: &[&str] = &["490-", "311-", "296-", "445-", "499-", "652-", "595-"];
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BomLine {
     pub mpn: Option<String>,
     pub manufacturer: Option<String>,

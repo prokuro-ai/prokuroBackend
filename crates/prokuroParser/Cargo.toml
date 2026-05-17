@@ -11,7 +11,7 @@ name = "prokuro-parser"
 path = "src/main.rs"
 
 [dependencies]
-axum = "*"
+axum = { version = "*", features = ["multipart"] }
 tokio = { version = "*", features = ["full"] }
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"

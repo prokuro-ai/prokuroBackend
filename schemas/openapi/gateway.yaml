@@ -1,8 +1,203 @@
 openapi: 3.1.0
 info:
-  title: Prokuro Public API
-  version: 0.0.0
-  description: >
-    Stub — add paths here as gateway endpoints are implemented.
+  title: Prokuro Parser API
+  version: 0.1.0
+  description: BOM ingestion and column-mapping pipeline.
 
-paths: {}
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: health
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /v1/parse:
+    post:
+      summary: Parse a BOM file
+      operationId: parseFile
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: CSV or XLSX BOM file
+                filename:
+                  type: string
+                  description: Override filename (used for extension detection)
+      responses:
+        "200":
+          description: File parsed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ParseResult"
+        "400":
+          description: Bad request (unsupported format or missing file field)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable — empty file, no header, or mapping confidence below 0.3
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ParseResult"
+                  - $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    WarningCode:
+      type: string
+      enum:
+        - LOW_MAPPING_CONFIDENCE
+        - DIST_SKU_SUSPECT
+        - MISSING_MPN
+        - ROW_LIMIT_EXCEEDED
+
+    ParseWarning:
+      type: object
+      required: [code, row_index]
+      properties:
+        code:
+          $ref: "#/components/schemas/WarningCode"
+        row_index:
+          type: integer
+        column:
+          type: string
+          nullable: true
+
+    BomLine:
+      type: object
+      required: [row_index, aml_candidates, extras]
+      properties:
+        mpn:
+          type: string
+          nullable: true
+        manufacturer:
+          type: string
+          nullable: true
+        quantity:
+          type: number
+          nullable: true
+        refdes:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        footprint:
+          type: string
+          nullable: true
+        aml_candidates:
+          type: array
+          items:
+            type: string
+        extras:
+          type: object
+          additionalProperties:
+            type: string
+        row_index:
+          type: integer
+
+    ParsedLineEvent:
+      type: object
+      properties:
+        mpn:
+          type: string
+          nullable: true
+        manufacturer:
+          type: string
+          nullable: true
+        quantity:
+          type: number
+          nullable: true
+        refdes:
+          type: string
+          nullable: true
+        aml_candidates:
+          type: array
+          items:
+            type: string
+
+    ParseStats:
+      type: object
+      required: [total_rows, parsed_rows, skipped_rows]
+      properties:
+        total_rows:
+          type: integer
+        parsed_rows:
+          type: integer
+        skipped_rows:
+          type: integer
+
+    ParseResult:
+      type: object
+      required:
+        - source_filename
+        - header_row_index
+        - column_mapping
+        - mapping_confidence
+        - lines
+        - warnings
+        - stats
+        - flywheel_events
+      properties:
+        source_filename:
+          type: string
+        sheet_name:
+          type: string
+          nullable: true
+        header_row_index:
+          type: integer
+        column_mapping:
+          type: object
+          additionalProperties:
+            type: string
+        mapping_confidence:
+          type: number
+          format: float
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/BomLine"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/ParseWarning"
+        stats:
+          $ref: "#/components/schemas/ParseStats"
+        flywheel_events:
+          type: array
+          items:
+            $ref: "#/components/schemas/ParsedLineEvent"
