@@ -68,6 +68,48 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /v1/analyze:
+    post:
+      summary: Analyze BOM with parser and enrichment
+      operationId: analyzeFile
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: CSV or XLSX BOM file
+      responses:
+        "200":
+          description: Unified analyze result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyzeResult"
+        "422":
+          description: Missing file, empty file, or low confidence mapping
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Upstream parser/enrichment service error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "504":
+          description: Upstream timeout
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     ErrorResponse:
@@ -201,3 +243,107 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ParsedLineEvent"
+
+    AnalyzeSummary:
+      type: object
+      required: [total, in_stock, out_of_stock, eol_or_nrnd, no_match, long_lead]
+      properties:
+        total:
+          type: integer
+        in_stock:
+          type: integer
+        out_of_stock:
+          type: integer
+        eol_or_nrnd:
+          type: integer
+        no_match:
+          type: integer
+        long_lead:
+          type: integer
+
+    AnalyzedLine:
+      type: object
+      required:
+        - row_index
+        - aml_candidates
+        - availability_status
+        - lifecycle_status
+        - match_status
+        - total_avail
+        - top_sellers
+      properties:
+        row_index:
+          type: integer
+        mpn:
+          type: string
+          nullable: true
+        manufacturer:
+          type: string
+          nullable: true
+        quantity:
+          type: number
+          nullable: true
+        refdes:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        aml_candidates:
+          type: array
+          items:
+            type: string
+        availability_status:
+          type: string
+        lifecycle_status:
+          type: string
+        match_status:
+          type: string
+        factory_lead_days:
+          type: integer
+          nullable: true
+        total_avail:
+          type: integer
+        top_sellers:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    AnalyzeResult:
+      type: object
+      required:
+        - upload_id
+        - source_filename
+        - mapping_confidence
+        - summary
+        - lines
+        - warnings
+        - stats
+        - analyzed_at
+      properties:
+        upload_id:
+          type: string
+        source_filename:
+          type: string
+        sheet_name:
+          type: string
+          nullable: true
+        mapping_confidence:
+          type: number
+        summary:
+          $ref: "#/components/schemas/AnalyzeSummary"
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalyzedLine"
+        warnings:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        stats:
+          type: object
+          additionalProperties: true
+        analyzed_at:
+          type: string
