@@ -61,10 +61,17 @@ impl NexarAuth {
             }
         }
 
-        let body = format!(
-            "grant_type=client_credentials&client_id={}&client_secret={}&scope=supply",
-            self.client_id, self.client_secret
-        );
+        let form = [
+            ("grant_type", "client_credentials"),
+            ("client_id", self.client_id.as_str()),
+            ("client_secret", self.client_secret.as_str()),
+            ("scope", "supply.domain"),
+        ];
+        let body = form
+            .iter()
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect::<Vec<String>>()
+            .join("&");
         let response = reqwest::Client::new()
             .post(TOKEN_URL)
             .header("content-type", "application/x-www-form-urlencoded")
@@ -74,14 +81,25 @@ impl NexarAuth {
             .map_err(|error| AuthError::RequestFailed(error.to_string()))?;
 
         let status = response.status();
-        if !status.is_success() {
-            return Err(AuthError::RequestFailed(format!("status {}", status.as_u16())));
-        }
-
-        let body: TokenResponse = response
-            .json()
+        let body = response
+            .text()
             .await
             .map_err(|error| AuthError::RequestFailed(error.to_string()))?;
+        tracing::error!("Nexar token response status={} body={}", status, body);
+
+        if !status.is_success() {
+            return Err(AuthError::RequestFailed(format!(
+                "status {} body {}",
+                status.as_u16(),
+                body
+            )));
+        }
+        let body: TokenResponse = serde_json::from_str(&body).map_err(|error| {
+            AuthError::RequestFailed(format!(
+                "failed to parse token response as json: {} body: {}",
+                error, body
+            ))
+        })?;
         let access_token = body.access_token.ok_or(AuthError::TokenMissing)?;
         let expires_at = Instant::now() + Duration::from_secs(body.expires_in);
 

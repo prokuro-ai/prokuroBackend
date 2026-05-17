@@ -11,20 +11,15 @@ const RATE_LIMIT_RETRY_DELAY_SECS: u64 = 2;
 
 const SUP_MULTI_MATCH_QUERY: &str = r#"query SupMultiMatch($queries: [SupPartMatchQuery!]!) {
   supMultiMatch(queries: $queries) {
-    hits {
-      part {
-        mpn
-        manufacturer { name }
-        totalAvail
-        manufacturerProductUrl
-        lifecycleStatus
-        medianPrice1000 { price currency }
-        sellers(includeBrokers: false) {
-          company { name }
-          offers {
-            inventoryLevel
-            factoryLeadDays
-          }
+    parts {
+      mpn
+      manufacturer { name }
+      totalAvail
+      sellers(includeBrokers: false) {
+        company { name }
+        offers {
+          inventoryLevel
+          factoryLeadDays
         }
       }
     }
@@ -113,6 +108,9 @@ impl NexarClient {
             let mut attempts = 0usize;
             let response = loop {
                 let body = build_graphql_request(batch);
+                let request_body = serde_json::to_string(&body)
+                    .unwrap_or_else(|_| "<invalid-request-body>".to_string());
+                tracing::error!("Nexar GraphQL request body={}", request_body);
                 let send_result = self
                     .http
                     .post(NEXAR_GRAPHQL_URL)
@@ -137,14 +135,25 @@ impl NexarClient {
                 break response;
             };
 
-            if !response.status().is_success() {
-                return Err(ClientError::Request(format!("status {}", response.status().as_u16())));
-            }
-
-            let parsed: GraphQlResponse = response
-                .json()
+            let status = response.status();
+            let body = response
+                .text()
                 .await
                 .map_err(|error| ClientError::Request(error.to_string()))?;
+            tracing::error!("Nexar GraphQL response status={} body={}", status, body);
+            if !status.is_success() {
+                return Err(ClientError::Request(format!(
+                    "status {} body {}",
+                    status.as_u16(),
+                    body
+                )));
+            }
+            let parsed: SupMultiMatchResponse = serde_json::from_str(&body).map_err(|error| {
+                ClientError::Request(format!(
+                    "failed to parse GraphQL response as json: {} body: {}",
+                    error, body
+                ))
+            })?;
             let mapped = map_batch_response(parsed, batch, batch_index * BATCH_SIZE);
             all_results.extend(mapped);
         }
@@ -186,24 +195,19 @@ fn build_graphql_request(lines: &[MatchInput]) -> GraphQlRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct GraphQlResponse {
-    data: GraphQlData,
+struct SupMultiMatchResponse {
+    data: SupMultiMatchData,
 }
 
 #[derive(Debug, Deserialize)]
-struct GraphQlData {
+struct SupMultiMatchData {
     #[serde(rename = "supMultiMatch")]
-    sup_multi_match: Vec<SupMultiMatchItem>,
+    sup_multi_match: Vec<SupPartMatchResult>,
 }
 
 #[derive(Debug, Deserialize)]
-struct SupMultiMatchItem {
-    hits: Vec<SupHit>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-struct SupHit {
-    part: SupPart,
+struct SupPartMatchResult {
+    parts: Vec<SupPart>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -212,8 +216,6 @@ struct SupPart {
     manufacturer: Option<SupManufacturer>,
     #[serde(rename = "totalAvail")]
     total_avail: Option<i64>,
-    #[serde(rename = "lifecycleStatus")]
-    lifecycle_status: Option<String>,
     sellers: Option<Vec<SupSeller>>,
 }
 
@@ -242,7 +244,7 @@ struct SupOffer {
 }
 
 fn map_batch_response(
-    response: GraphQlResponse,
+    response: SupMultiMatchResponse,
     inputs: &[MatchInput],
     global_start_index: usize,
 ) -> Vec<MatchResult> {
@@ -254,15 +256,15 @@ fn map_batch_response(
                 .data
                 .sup_multi_match
                 .get(idx)
-                .map(|item| item.hits.as_slice())
+                .map(|item| item.parts.as_slice())
                 .unwrap_or(&[]);
             map_one_result(hits, input, global_start_index + idx)
         })
         .collect()
 }
 
-fn map_one_result(hits: &[SupHit], input: &MatchInput, input_index: usize) -> MatchResult {
-    let Some(selected_hit) = select_hit(hits, input) else {
+fn map_one_result(parts: &[SupPart], input: &MatchInput, input_index: usize) -> MatchResult {
+    let Some(selected_part) = select_part(parts, input) else {
         return MatchResult {
             input_index,
             nexar_part_id: None,
@@ -277,27 +279,27 @@ fn map_one_result(hits: &[SupHit], input: &MatchInput, input_index: usize) -> Ma
         };
     };
 
-    let match_status = if manufacturer_matches(input.manufacturer.as_deref(), selected_hit) {
+    let match_status = if manufacturer_matches(input.manufacturer.as_deref(), selected_part) {
         MatchStatus::Exact
     } else {
         MatchStatus::Fuzzy
     };
 
-    let total_avail = selected_hit.part.total_avail.unwrap_or(0);
+    let total_avail = selected_part.total_avail.unwrap_or(0);
     let availability_status = if total_avail > 0 {
         AvailabilityStatus::InStock
     } else {
         AvailabilityStatus::OutOfStock
     };
-    let lifecycle_status = map_lifecycle_status(selected_hit.part.lifecycle_status.as_deref());
-    let top_sellers = map_top_sellers(selected_hit);
-    let factory_lead_days = min_factory_lead_days(selected_hit);
+    let lifecycle_status = LifecycleStatus::Unknown;
+    let top_sellers = map_top_sellers(selected_part);
+    let factory_lead_days = min_factory_lead_days(selected_part);
 
     MatchResult {
         input_index,
         nexar_part_id: None,
-        matched_mpn: selected_hit.part.mpn.clone(),
-        matched_manufacturer: selected_hit.part.manufacturer.as_ref().and_then(|m| m.name.clone()),
+        matched_mpn: selected_part.mpn.clone(),
+        matched_manufacturer: selected_part.manufacturer.as_ref().and_then(|m| m.name.clone()),
         match_status,
         total_avail,
         availability_status,
@@ -307,27 +309,27 @@ fn map_one_result(hits: &[SupHit], input: &MatchInput, input_index: usize) -> Ma
     }
 }
 
-fn select_hit<'a>(hits: &'a [SupHit], input: &MatchInput) -> Option<&'a SupHit> {
-    if hits.is_empty() {
+fn select_part<'a>(parts: &'a [SupPart], input: &MatchInput) -> Option<&'a SupPart> {
+    if parts.is_empty() {
         return None;
     }
     if let Some(target_manufacturer) = input.manufacturer.as_deref() {
-        if let Some(exact) = hits.iter().find(|hit| {
+        if let Some(exact) = parts.iter().find(|part| {
             eq_case_insensitive(
-                hit.part.manufacturer.as_ref().and_then(|m| m.name.as_deref()),
+                part.manufacturer.as_ref().and_then(|m| m.name.as_deref()),
                 Some(target_manufacturer),
             )
         }) {
             return Some(exact);
         }
     }
-    hits.first()
+    parts.first()
 }
 
-fn manufacturer_matches(expected: Option<&str>, hit: &SupHit) -> bool {
+fn manufacturer_matches(expected: Option<&str>, part: &SupPart) -> bool {
     if let Some(expected_name) = expected {
         return eq_case_insensitive(
-            hit.part.manufacturer.as_ref().and_then(|m| m.name.as_deref()),
+            part.manufacturer.as_ref().and_then(|m| m.name.as_deref()),
             Some(expected_name),
         );
     }
@@ -341,9 +343,8 @@ fn eq_case_insensitive(left: Option<&str>, right: Option<&str>) -> bool {
     }
 }
 
-fn map_top_sellers(hit: &SupHit) -> Vec<SellerOffer> {
-    let mut sellers: Vec<SellerOffer> = hit
-        .part
+fn map_top_sellers(part: &SupPart) -> Vec<SellerOffer> {
+    let mut sellers: Vec<SellerOffer> = part
         .sellers
         .as_deref()
         .unwrap_or(&[])
@@ -367,8 +368,8 @@ fn map_top_sellers(hit: &SupHit) -> Vec<SellerOffer> {
     sellers
 }
 
-fn min_factory_lead_days(hit: &SupHit) -> Option<i32> {
-    hit.part
+fn min_factory_lead_days(part: &SupPart) -> Option<i32> {
+    part
         .sellers
         .as_deref()
         .unwrap_or(&[])
@@ -378,30 +379,21 @@ fn min_factory_lead_days(hit: &SupHit) -> Option<i32> {
         .min()
 }
 
-fn map_lifecycle_status(raw: Option<&str>) -> LifecycleStatus {
-    match raw.map(str::trim).map(str::to_ascii_uppercase).as_deref() {
-        Some("ACTIVE") => LifecycleStatus::Active,
-        Some("NRND") => LifecycleStatus::Nrnd,
-        Some("EOL") => LifecycleStatus::Eol,
-        Some("DISCONTINUED") => LifecycleStatus::Discontinued,
-        _ => LifecycleStatus::Unknown,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::{
-        AvailabilityStatus, GraphQlResponse, LifecycleStatus, MatchInput, MatchStatus, map_batch_response,
-        map_lifecycle_status,
+        AvailabilityStatus, LifecycleStatus, MatchInput, MatchStatus, SupMultiMatchResponse,
+        map_batch_response,
     };
 
     #[test]
     fn hit_maps_to_in_stock_active() {
         let payload =
             include_str!("../../tests/fixtures/nexar/multimatch_hit.json");
-        let response: GraphQlResponse = serde_json::from_str(payload).expect("fixture should deserialize");
+        let response: SupMultiMatchResponse =
+            serde_json::from_str(payload).expect("fixture should deserialize");
         let inputs = vec![MatchInput {
             mpn: "GRM188R71H104KA93D".to_string(),
             manufacturer: Some("Murata".to_string()),
@@ -412,14 +404,15 @@ mod tests {
         assert_eq!(result[0].availability_status, AvailabilityStatus::InStock);
         assert_eq!(result[0].match_status, MatchStatus::Exact);
         assert_eq!(result[0].matched_mpn.as_deref(), Some("GRM188R71H104KA93D"));
-        assert_eq!(result[0].lifecycle_status, LifecycleStatus::Active);
+        assert_eq!(result[0].lifecycle_status, LifecycleStatus::Unknown);
     }
 
     #[test]
     fn miss_maps_to_no_match() {
         let payload =
             include_str!("../../tests/fixtures/nexar/multimatch_miss.json");
-        let response: GraphQlResponse = serde_json::from_str(payload).expect("fixture should deserialize");
+        let response: SupMultiMatchResponse =
+            serde_json::from_str(payload).expect("fixture should deserialize");
         let inputs = vec![MatchInput {
             mpn: "DOES-NOT-EXIST".to_string(),
             manufacturer: Some("Unknown".to_string()),
@@ -432,13 +425,19 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_active_maps_correctly() {
-        assert_eq!(map_lifecycle_status(Some("Active")), LifecycleStatus::Active);
-    }
+    fn lifecycle_defaults_to_unknown() {
+        let payload =
+            include_str!("../../tests/fixtures/nexar/multimatch_hit.json");
+        let response: SupMultiMatchResponse =
+            serde_json::from_str(payload).expect("fixture should deserialize");
+        let inputs = vec![MatchInput {
+            mpn: "GRM188R71H104KA93D".to_string(),
+            manufacturer: Some("Murata".to_string()),
+        }];
 
-    #[test]
-    fn lifecycle_unknown_fallback() {
-        assert_eq!(map_lifecycle_status(Some("preview")), LifecycleStatus::Unknown);
+        let result = map_batch_response(response, &inputs, 0);
+
+        assert_eq!(result[0].lifecycle_status, LifecycleStatus::Unknown);
     }
 
     #[test]
@@ -446,12 +445,10 @@ mod tests {
         let payload = json!({
             "data": {
                 "supMultiMatch": [{
-                    "hits": [{
-                        "part": {
+                    "parts": [{
                             "mpn": "GRM188R71H104KA93D",
                             "manufacturer": { "name": "Murata" },
                             "totalAvail": 100,
-                            "lifecycleStatus": "Active",
                             "sellers": [
                                 {
                                     "company": { "name": "SellerA" },
@@ -462,12 +459,11 @@ mod tests {
                                     "offers": [{ "inventoryLevel": 20, "factoryLeadDays": 14 }]
                                 }
                             ]
-                        }
                     }]
                 }]
             }
         });
-        let response: GraphQlResponse =
+        let response: SupMultiMatchResponse =
             serde_json::from_value(payload).expect("fixture should deserialize");
         let inputs = vec![MatchInput {
             mpn: "GRM188R71H104KA93D".to_string(),
@@ -484,24 +480,21 @@ mod tests {
         let payload = json!({
             "data": {
                 "supMultiMatch": [{
-                    "hits": [{
-                        "part": {
+                    "parts": [{
                             "mpn": "GRM188R71H104KA93D",
                             "manufacturer": { "name": "Murata" },
                             "totalAvail": 100,
-                            "lifecycleStatus": "Active",
                             "sellers": [
                                 { "company": { "name": "S1" }, "offers": [{ "inventoryLevel": 1, "factoryLeadDays": 14 }] },
                                 { "company": { "name": "S2" }, "offers": [{ "inventoryLevel": 200, "factoryLeadDays": 14 }] },
                                 { "company": { "name": "S3" }, "offers": [{ "inventoryLevel": 50, "factoryLeadDays": 14 }] },
                                 { "company": { "name": "S4" }, "offers": [{ "inventoryLevel": 75, "factoryLeadDays": 14 }] }
                             ]
-                        }
                     }]
                 }]
             }
         });
-        let response: GraphQlResponse =
+        let response: SupMultiMatchResponse =
             serde_json::from_value(payload).expect("fixture should deserialize");
         let inputs = vec![MatchInput {
             mpn: "GRM188R71H104KA93D".to_string(),

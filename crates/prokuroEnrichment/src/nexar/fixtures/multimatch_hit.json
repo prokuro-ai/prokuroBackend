@@ -2,9 +2,8 @@
   "data": {
     "supMultiMatch": [
       {
-        "hits": [
+        "parts": [
           {
-            "part": {
               "mpn": "GRM188R71H104KA93D",
               "manufacturer": {
                 "name": "Murata"
@@ -40,7 +39,6 @@
                   ]
                 }
               ]
-            }
           }
         ]
       }

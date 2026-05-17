@@ -10,3 +10,4 @@ rust-best-practices/
 .claude/
 # Corpus large files (use Git LFS for committed xlsx)
 # corpus/raw/*.xlsx
+.env

@@ -44,9 +44,14 @@ async fn enrich_handler(payload: Result<Json<Vec<MatchInput>>, JsonRejection>) -
         }
     };
 
+    tracing::debug!(
+        "NEXAR_CLIENT_ID present: {}",
+        std::env::var("NEXAR_CLIENT_ID").is_ok()
+    );
     let client = match NexarClient::from_env() {
         Ok(client) => client,
-        Err(AuthError::EnvVarMissing(_)) => {
+        Err(AuthError::EnvVarMissing(error_key)) => {
+            tracing::error!(%error_key, "failed to build Nexar client from env");
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({"error": "Nexar credentials not configured"})),
@@ -54,6 +59,7 @@ async fn enrich_handler(payload: Result<Json<Vec<MatchInput>>, JsonRejection>) -
                 .into_response()
         }
         Err(error) => {
+            tracing::error!(error = %error, "failed to build Nexar client from env");
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({"error": error.to_string()})),
@@ -74,9 +80,9 @@ async fn enrich_handler(payload: Result<Json<Vec<MatchInput>>, JsonRejection>) -
             Json(json!({"error": message})),
         )
             .into_response(),
-        Err(ClientError::Auth(_)) => (
+        Err(ClientError::Auth(error)) => (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({"error": "Nexar credentials not configured"})),
+            Json(json!({"error": error.to_string()})),
         )
             .into_response(),
     }
