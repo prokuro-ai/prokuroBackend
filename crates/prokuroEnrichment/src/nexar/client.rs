@@ -342,7 +342,8 @@ fn eq_case_insensitive(left: Option<&str>, right: Option<&str>) -> bool {
 }
 
 fn map_top_sellers(hit: &SupHit) -> Vec<SellerOffer> {
-    hit.part
+    let mut sellers: Vec<SellerOffer> = hit
+        .part
         .sellers
         .as_deref()
         .unwrap_or(&[])
@@ -359,7 +360,11 @@ fn map_top_sellers(hit: &SupHit) -> Vec<SellerOffer> {
                 .unwrap_or(0);
             Some(SellerOffer { name, inventory_level })
         })
-        .collect()
+        .collect();
+
+    sellers.sort_by(|a, b| b.inventory_level.cmp(&a.inventory_level));
+    sellers.truncate(3);
+    sellers
 }
 
 fn min_factory_lead_days(hit: &SupHit) -> Option<i32> {
@@ -385,8 +390,11 @@ fn map_lifecycle_status(raw: Option<&str>) -> LifecycleStatus {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::{
         AvailabilityStatus, GraphQlResponse, LifecycleStatus, MatchInput, MatchStatus, map_batch_response,
+        map_lifecycle_status,
     };
 
     #[test]
@@ -421,5 +429,90 @@ mod tests {
 
         assert_eq!(result[0].availability_status, AvailabilityStatus::NoMatch);
         assert_eq!(result[0].match_status, MatchStatus::None);
+    }
+
+    #[test]
+    fn lifecycle_active_maps_correctly() {
+        assert_eq!(map_lifecycle_status(Some("Active")), LifecycleStatus::Active);
+    }
+
+    #[test]
+    fn lifecycle_unknown_fallback() {
+        assert_eq!(map_lifecycle_status(Some("preview")), LifecycleStatus::Unknown);
+    }
+
+    #[test]
+    fn lead_days_takes_minimum() {
+        let payload = json!({
+            "data": {
+                "supMultiMatch": [{
+                    "hits": [{
+                        "part": {
+                            "mpn": "GRM188R71H104KA93D",
+                            "manufacturer": { "name": "Murata" },
+                            "totalAvail": 100,
+                            "lifecycleStatus": "Active",
+                            "sellers": [
+                                {
+                                    "company": { "name": "SellerA" },
+                                    "offers": [{ "inventoryLevel": 10, "factoryLeadDays": 28 }]
+                                },
+                                {
+                                    "company": { "name": "SellerB" },
+                                    "offers": [{ "inventoryLevel": 20, "factoryLeadDays": 14 }]
+                                }
+                            ]
+                        }
+                    }]
+                }]
+            }
+        });
+        let response: GraphQlResponse =
+            serde_json::from_value(payload).expect("fixture should deserialize");
+        let inputs = vec![MatchInput {
+            mpn: "GRM188R71H104KA93D".to_string(),
+            manufacturer: Some("Murata".to_string()),
+        }];
+
+        let result = map_batch_response(response, &inputs, 0);
+
+        assert_eq!(result[0].factory_lead_days, Some(14));
+    }
+
+    #[test]
+    fn top_sellers_capped_at_3() {
+        let payload = json!({
+            "data": {
+                "supMultiMatch": [{
+                    "hits": [{
+                        "part": {
+                            "mpn": "GRM188R71H104KA93D",
+                            "manufacturer": { "name": "Murata" },
+                            "totalAvail": 100,
+                            "lifecycleStatus": "Active",
+                            "sellers": [
+                                { "company": { "name": "S1" }, "offers": [{ "inventoryLevel": 1, "factoryLeadDays": 14 }] },
+                                { "company": { "name": "S2" }, "offers": [{ "inventoryLevel": 200, "factoryLeadDays": 14 }] },
+                                { "company": { "name": "S3" }, "offers": [{ "inventoryLevel": 50, "factoryLeadDays": 14 }] },
+                                { "company": { "name": "S4" }, "offers": [{ "inventoryLevel": 75, "factoryLeadDays": 14 }] }
+                            ]
+                        }
+                    }]
+                }]
+            }
+        });
+        let response: GraphQlResponse =
+            serde_json::from_value(payload).expect("fixture should deserialize");
+        let inputs = vec![MatchInput {
+            mpn: "GRM188R71H104KA93D".to_string(),
+            manufacturer: Some("Murata".to_string()),
+        }];
+
+        let result = map_batch_response(response, &inputs, 0);
+
+        assert_eq!(result[0].top_sellers.len(), 3);
+        assert_eq!(result[0].top_sellers[0].name, "S2");
+        assert_eq!(result[0].top_sellers[1].name, "S4");
+        assert_eq!(result[0].top_sellers[2].name, "S3");
     }
 }

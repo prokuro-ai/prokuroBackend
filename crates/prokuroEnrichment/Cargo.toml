@@ -20,3 +20,6 @@ thiserror = "*"
 tracing = "*"
 tracing-subscriber = "*"
 tower-http = { version = "*", features = ["trace"] }
+
+[dev-dependencies]
+tower = "*"

@@ -1,7 +1,5 @@
 use std::{env, net::SocketAddr};
 
-use axum::{Json, Router, response::IntoResponse, routing::get};
-use serde_json::json;
 use tokio::signal::unix::{SignalKind, signal};
 
 #[tokio::main]
@@ -16,18 +14,7 @@ async fn main() -> Result<(), std::io::Error> {
     let listener = tokio::net::TcpListener::bind(address).await?;
 
     tracing::info!(%address, "prokuro-enrichment listening");
-    axum::serve(listener, app()).with_graceful_shutdown(shutdown_signal()).await
-}
-
-fn app() -> Router {
-    Router::new().route("/health", get(health))
-}
-
-async fn health() -> impl IntoResponse {
-    Json(json!({
-        "status": "ok",
-        "service": "prokuro-enrichment"
-    }))
+    axum::serve(listener, prokuro_enrichment::app()).with_graceful_shutdown(shutdown_signal()).await
 }
 
 async fn shutdown_signal() {
