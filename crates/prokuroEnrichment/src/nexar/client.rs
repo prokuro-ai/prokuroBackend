@@ -363,7 +363,7 @@ fn map_top_sellers(part: &SupPart) -> Vec<SellerOffer> {
         })
         .collect();
 
-    sellers.sort_by(|a, b| b.inventory_level.cmp(&a.inventory_level));
+    sellers.sort_by_key(|seller| std::cmp::Reverse(seller.inventory_level));
     sellers.truncate(3);
     sellers
 }
