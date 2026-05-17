@@ -4,6 +4,7 @@ pub mod columns;
 pub enum WarningCode {
     LowMappingConfidence,
     DistSkuSuspect,
+    MissingMpn,
 }
 
 #[derive(Debug, Clone)]
