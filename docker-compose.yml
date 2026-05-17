@@ -1,0 +1,35 @@
+services:
+  parser:
+    build:
+      context: .
+      dockerfile: docker/parser.Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+
+  enrichment:
+    build:
+      context: .
+      dockerfile: docker/enrichment.Dockerfile
+    ports:
+      - "3002:3002"
+    environment:
+      - PORT=3002
+      - NEXAR_CLIENT_ID=${NEXAR_CLIENT_ID}
+      - NEXAR_CLIENT_SECRET=${NEXAR_CLIENT_SECRET}
+
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/gateway.Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - PARSER_URL=http://parser:3001
+      - ENRICHMENT_URL=http://enrichment:3002
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:3001
+    depends_on:
+      - parser
+      - enrichment
