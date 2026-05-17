@@ -108,9 +108,10 @@ impl NexarClient {
             let mut attempts = 0usize;
             let response = loop {
                 let body = build_graphql_request(batch);
-                let request_body = serde_json::to_string(&body)
-                    .unwrap_or_else(|_| "<invalid-request-body>".to_string());
-                tracing::error!("Nexar GraphQL request body={}", request_body);
+                // Debug-only: keep disabled in prod to avoid noisy/sensitive payload logs.
+                // let request_body = serde_json::to_string(&body)
+                //     .unwrap_or_else(|_| "<invalid-request-body>".to_string());
+                // tracing::error!("Nexar GraphQL request body={}", request_body);
                 let send_result = self
                     .http
                     .post(NEXAR_GRAPHQL_URL)
@@ -140,7 +141,8 @@ impl NexarClient {
                 .text()
                 .await
                 .map_err(|error| ClientError::Request(error.to_string()))?;
-            tracing::error!("Nexar GraphQL response status={} body={}", status, body);
+            // Debug-only: keep disabled in prod to avoid noisy/sensitive payload logs.
+            // tracing::error!("Nexar GraphQL response status={} body={}", status, body);
             if !status.is_success() {
                 return Err(ClientError::Request(format!(
                     "status {} body {}",

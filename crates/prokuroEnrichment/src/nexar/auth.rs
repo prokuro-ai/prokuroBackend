@@ -85,7 +85,8 @@ impl NexarAuth {
             .text()
             .await
             .map_err(|error| AuthError::RequestFailed(error.to_string()))?;
-        tracing::error!("Nexar token response status={} body={}", status, body);
+        // Debug-only: keep disabled in prod to avoid logging sensitive token payloads.
+        // tracing::error!("Nexar token response status={} body={}", status, body);
 
         if !status.is_success() {
             return Err(AuthError::RequestFailed(format!(
