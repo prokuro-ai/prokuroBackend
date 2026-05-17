@@ -1,0 +1,12 @@
+/target/
+**/*.rs.bk
+.env
+.env.local
+*.log
+.DS_Store
+.idea/
+.vscode/
+.claude/
+
+# Corpus large files (use Git LFS for committed xlsx)
+# corpus/raw/*.xlsx

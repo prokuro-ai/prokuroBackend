@@ -1,0 +1,11 @@
+[package]
+name = "prokuro-parser"
+description = "BOM ingestion: CSV/XLSX parse, column mapping, canonical rows"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "prokuro-parser"
+path = "src/main.rs"

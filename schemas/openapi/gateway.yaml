@@ -1,0 +1,8 @@
+openapi: 3.1.0
+info:
+  title: Prokuro Public API
+  version: 0.0.0
+  description: >
+    Stub — add paths here as gateway endpoints are implemented.
+
+paths: {}

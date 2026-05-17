@@ -1,0 +1,11 @@
+[package]
+name = "prokuro-gateway"
+description = "Public BFF: POST /v1/analyze, flywheel logging"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "prokuro-gateway"
+path = "src/main.rs"
