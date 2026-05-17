@@ -11,3 +11,6 @@ rust-best-practices/
 # Corpus large files (use Git LFS for committed xlsx)
 # corpus/raw/*.xlsx
 .env
+crates/prokuroEnrichment/src/nexar/fixtures/
+crates/prokuroEnrichment/tests/fixtures/nexar/
+corpus/reports/
