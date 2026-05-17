@@ -9,3 +9,14 @@ repository.workspace = true
 [[bin]]
 name = "prokuro-enrichment"
 path = "src/main.rs"
+
+[dependencies]
+axum = { version = "*", features = ["multipart"] }
+tokio = { version = "*", features = ["full"] }
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+reqwest = { version = "*", features = ["json"] }
+thiserror = "*"
+tracing = "*"
+tracing-subscriber = "*"
+tower-http = { version = "*", features = ["trace"] }

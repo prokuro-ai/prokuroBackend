@@ -1,0 +1,1 @@
+//! Nexar API client placeholder.
