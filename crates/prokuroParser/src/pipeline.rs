@@ -33,6 +33,7 @@ pub struct ParseResult {
     pub source_filename: String,
     pub sheet_name: Option<String>,
     pub header_row_index: usize,
+    pub raw_headers: Vec<String>,
     pub column_mapping: ColumnMapping,
     pub mapping_confidence: f32,
     pub lines: Vec<BomLine>,
@@ -62,7 +63,7 @@ pub async fn parse_file(bytes: &[u8], filename: &str) -> Result<ParseResult, Par
     let synonyms = default_synonyms();
 
     let (grid, sheet_name) = match ext.as_str() {
-        "csv" => {
+        "csv" | "txt" => {
             let grid = read_csv(bytes).map_err(|error| match error {
                 IngestParseError::EncodingError(_) => ParseError::EncodingError,
                 other => ParseError::InternalError(other.to_string()),
@@ -88,6 +89,11 @@ pub async fn parse_file(bytes: &[u8], filename: &str) -> Result<ParseResult, Par
 
     let header_row_index = find_header_row(&grid, &synonyms).ok_or(ParseError::EmptyFile)?;
     let header = grid[header_row_index].clone();
+    let raw_headers: Vec<String> = header
+        .iter()
+        .map(|h| h.trim().to_lowercase())
+        .filter(|h| !h.is_empty())
+        .collect();
     let (column_mapping, mapping_confidence, mut warnings, column_offset) =
         map_columns(&header, &synonyms);
     let mapped_header: Vec<String> = header.iter().skip(column_offset).cloned().collect();
@@ -147,6 +153,7 @@ pub async fn parse_file(bytes: &[u8], filename: &str) -> Result<ParseResult, Par
         source_filename: filename.to_string(),
         sheet_name,
         header_row_index,
+        raw_headers,
         column_mapping,
         mapping_confidence,
         lines,
@@ -189,7 +196,7 @@ mod tests {
     #[tokio::test]
     async fn unsupported_extension_returns_error() {
         use super::ParseError;
-        let result = parse_file(b"data", "bom.txt").await;
+        let result = parse_file(b"data", "bom.pdf").await;
         assert!(matches!(result, Err(ParseError::UnsupportedFormat)));
     }
 
