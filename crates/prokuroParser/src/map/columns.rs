@@ -28,6 +28,19 @@ const NEGATIVE: &[&str] = &[
 ];
 
 const ALT_MPN: &[&str] = &["alt mpn", "alternate part", "second source", "alt part"];
+const WEAK_REFDES: &[&str] = &["id", "item", "item no", "item number", "line", "line no"];
+const STRONG_REFDES: &[&str] = &[
+    "refdes",
+    "designator",
+    "reference",
+    "references",
+    "ref designator",
+    "reference designator",
+    "ref des",
+    "reference_designator",
+    "component reference",
+    "comp ref",
+];
 
 pub fn map_columns(
     header_row: &[String],
@@ -36,6 +49,11 @@ pub fn map_columns(
     let mut mapping = ColumnMapping::new();
     let mut warnings = Vec::new();
     let column_offset = detect_column_offset(header_row);
+    let has_strong_refdes = header_row
+        .iter()
+        .skip(column_offset)
+        .map(|h| h.trim().to_lowercase())
+        .any(|h| STRONG_REFDES.contains(&h.as_str()));
 
     for header in header_row.iter().skip(column_offset) {
         let norm = header.trim().to_lowercase();
@@ -55,6 +73,11 @@ pub fn map_columns(
 
         if ALT_MPN.contains(&norm.as_str()) {
             mapping.insert(header.clone(), "alternate_mpn".to_string());
+            continue;
+        }
+        // "id/item/line" are weak RefDes hints and often represent row indexes.
+        // If a stronger RefDes-like column exists, do not map these weak headers.
+        if has_strong_refdes && WEAK_REFDES.contains(&norm.as_str()) {
             continue;
         }
 
@@ -232,5 +255,15 @@ mod tests {
         assert_eq!(column_offset, 3);
         assert_eq!(mapping.get("MPN").map(String::as_str), Some("mpn"));
         assert_eq!(mapping.get("Manufacturer").map(String::as_str), Some("manufacturer"));
+    }
+
+    #[test]
+    fn weak_refdes_id_is_ignored_when_designator_exists() {
+        let headers = vec!["Id".to_string(), "Designator".to_string(), "Quantity".to_string()];
+        let synonyms = default_synonyms();
+        let (mapping, _, _, _) = map_columns(&headers, &synonyms);
+
+        assert_eq!(mapping.get("Designator").map(String::as_str), Some("refdes"));
+        assert!(!mapping.contains_key("Id"));
     }
 }

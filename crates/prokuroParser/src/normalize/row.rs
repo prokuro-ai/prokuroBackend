@@ -102,6 +102,13 @@ pub fn normalize_row(
         }
     }
 
+    if mpn.is_none()
+        && refdes.is_none()
+        && looks_like_cost_summary_row(description.as_deref(), footprint.as_deref(), &extras)
+    {
+        return (None, vec![]);
+    }
+
     (
         Some(BomLine { mpn, manufacturer, quantity, refdes, description, footprint, aml_candidates, extras, row_index }),
         warnings,
@@ -113,6 +120,39 @@ fn looks_like_dist_sku(s: &str) -> bool {
     let bytes = s.as_bytes();
     let digit_run = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
     digit_run >= 3 && bytes.get(digit_run) == Some(&b'-')
+}
+
+fn looks_like_cost_summary_row(
+    description: Option<&str>,
+    footprint: Option<&str>,
+    extras: &HashMap<String, String>,
+) -> bool {
+    const COST_KEYWORDS: &[&str] = &[
+        "cost",
+        "price",
+        "subtotal",
+        "total",
+        "jlcpcb",
+        "pcbway",
+        "assembly",
+        "shipping",
+    ];
+
+    let mut text = String::new();
+    if let Some(v) = description {
+        text.push_str(v);
+        text.push(' ');
+    }
+    if let Some(v) = footprint {
+        text.push_str(v);
+        text.push(' ');
+    }
+    for value in extras.values() {
+        text.push_str(value);
+        text.push(' ');
+    }
+    let text = text.to_lowercase();
+    COST_KEYWORDS.iter().any(|k| text.contains(k))
 }
 
 #[cfg(test)]
@@ -205,5 +245,18 @@ mod tests {
         let (line, _) = normalize_row(&raw, &mapping, &header, 1);
         let line = line.unwrap();
         assert_eq!(line.extras.get("Digi-Key PN").map(String::as_str), Some("490-1234-1-ND"));
+    }
+
+    #[test]
+    fn skips_cost_summary_rows_without_identifiers() {
+        let (header, mapping) = headers_and_mapping(&["Quantity", "Designation", "Package"]);
+        let raw = vec![
+            "55".to_string(),
+            "10".to_string(),
+            "Main/Rigid board JLCPCB cost:".to_string(),
+        ];
+        let (line, warnings) = normalize_row(&raw, &mapping, &header, 42);
+        assert!(line.is_none());
+        assert!(warnings.is_empty());
     }
 }
