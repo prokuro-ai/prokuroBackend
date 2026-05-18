@@ -11,6 +11,7 @@ aliases = [
 aliases = [
   "qty", "quantity", "count", "amount", "q", "number", "number of", "total",
   "qty.", "quantity per board", "qty per board", "qty/board", "quantity per pcb",
+  "pcs", "pieces", "units", "no.", "nos",
 ]
 
 [[group]]
@@ -18,6 +19,7 @@ aliases = [
   "reference", "ref", "refdes", "designator", "refs", "references",
   "ref designator", "component reference",
   "reference designator", "ref des", "ref_des", "reference_designator", "comp ref",
+  "id", "item", "item no", "item number", "line", "line no",
 ]
 
 [[group]]
@@ -31,6 +33,7 @@ aliases = [
   "description", "desc", "value", "designation", "device",
   "component", "part description", "specification",
   "component description", "comp description", "item description",
+  "name", "part name", "component name", "item name",
 ]
 
 [[group]]
