@@ -29,6 +29,7 @@ const NEGATIVE: &[&str] = &[
 
 const ALT_MPN: &[&str] = &["alt mpn", "alternate part", "second source", "alt part"];
 const WEAK_REFDES: &[&str] = &["id", "item", "item no", "item number", "line", "line no"];
+const WEAK_QTY: &[&str] = &["number", "number of", "total", "units", "unit", "nos", "no.", "no"];
 const STRONG_REFDES: &[&str] = &[
     "refdes",
     "designator",
@@ -41,6 +42,7 @@ const STRONG_REFDES: &[&str] = &[
     "component reference",
     "comp ref",
 ];
+const STRONG_QTY: &[&str] = &["qty", "quantity", "qty.", "quantity per board", "qty per board"];
 
 pub fn map_columns(
     header_row: &[String],
@@ -54,6 +56,11 @@ pub fn map_columns(
         .skip(column_offset)
         .map(|h| h.trim().to_lowercase())
         .any(|h| STRONG_REFDES.contains(&h.as_str()));
+    let has_strong_qty = header_row
+        .iter()
+        .skip(column_offset)
+        .map(|h| h.trim().to_lowercase())
+        .any(|h| STRONG_QTY.contains(&h.as_str()));
 
     for header in header_row.iter().skip(column_offset) {
         let norm = header.trim().to_lowercase();
@@ -80,6 +87,10 @@ pub fn map_columns(
         if has_strong_refdes && WEAK_REFDES.contains(&norm.as_str()) {
             continue;
         }
+        // "total/unit/no." are weak qty hints and often represent money, units, or counters.
+        if has_strong_qty && WEAK_QTY.contains(&norm.as_str()) {
+            continue;
+        }
 
         // 1. Exact lowercase match
         let mut matched = false;
@@ -104,6 +115,12 @@ pub fn map_columns(
         for (group_idx, group) in synonyms.iter().enumerate() {
             if let Some(&(field, _)) = CANONICAL.get(group_idx) {
                 for alias in group {
+                    if field == "refdes" && WEAK_REFDES.contains(&alias.as_str()) {
+                        continue;
+                    }
+                    if field == "qty" && WEAK_QTY.contains(&alias.as_str()) {
+                        continue;
+                    }
                     let score = jaro_winkler(&norm, alias);
                     if score >= 0.85 && score > best_score {
                         best_score = score;
@@ -265,5 +282,25 @@ mod tests {
 
         assert_eq!(mapping.get("Designator").map(String::as_str), Some("refdes"));
         assert!(!mapping.contains_key("Id"));
+    }
+
+    #[test]
+    fn fuzzy_link_does_not_map_to_refdes_line_alias() {
+        let headers = vec!["Link".to_string(), "Designator".to_string(), "Qty".to_string()];
+        let synonyms = default_synonyms();
+        let (mapping, _, _, _) = map_columns(&headers, &synonyms);
+
+        assert_eq!(mapping.get("Designator").map(String::as_str), Some("refdes"));
+        assert!(!mapping.contains_key("Link"));
+    }
+
+    #[test]
+    fn weak_qty_total_is_ignored_when_qty_exists() {
+        let headers = vec!["Qty".to_string(), "Total".to_string(), "Part Number".to_string()];
+        let synonyms = default_synonyms();
+        let (mapping, _, _, _) = map_columns(&headers, &synonyms);
+
+        assert_eq!(mapping.get("Qty").map(String::as_str), Some("qty"));
+        assert!(!mapping.contains_key("Total"));
     }
 }

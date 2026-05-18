@@ -36,7 +36,18 @@ pub fn normalize_row(
     for (col_idx, col_header) in header.iter().enumerate() {
         let cell = raw.get(col_idx).map(|s| s.trim().to_string()).unwrap_or_default();
         if let Some(canonical) = mapping.get(col_header) {
-            canonical_values.insert(canonical.as_str(), cell);
+            match canonical_values.get_mut(canonical.as_str()) {
+                Some(existing) => {
+                    // Keep the first non-empty mapped value so weak fallback columns
+                    // (e.g. Unit/Total/MP) don't overwrite better primary columns.
+                    if existing.is_empty() && !cell.is_empty() {
+                        *existing = cell;
+                    }
+                }
+                None => {
+                    canonical_values.insert(canonical.as_str(), cell);
+                }
+            }
         } else if !col_header.trim().is_empty() && !cell.is_empty() {
             extras.insert(col_header.clone(), cell);
         }
@@ -258,5 +269,15 @@ mod tests {
         let (line, warnings) = normalize_row(&raw, &mapping, &header, 42);
         assert!(line.is_none());
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn keeps_first_non_empty_for_duplicate_canonical_fields() {
+        let (header, mapping) = headers_and_mapping(&["MPN", "Manufacturer Part Number", "Description"]);
+        let raw = vec!["".to_string(), "BH3AAPC".to_string(), "Battery Holder".to_string()];
+
+        let (line, _) = normalize_row(&raw, &mapping, &header, 7);
+        let line = line.expect("line should parse");
+        assert_eq!(line.mpn.as_deref(), Some("BH3AAPC"));
     }
 }
