@@ -1,8 +1,9 @@
 use serde::Serialize;
+use std::path::Path;
 
 use crate::detect::header::find_header_row;
 use crate::detect::sheet::select_sheet;
-use crate::detect::synonyms::default_synonyms;
+use crate::detect::synonyms::load_synonyms;
 use crate::ingest::csv::read_csv;
 use crate::ingest::ParseError as IngestParseError;
 use crate::ingest::xlsx::read_xlsx;
@@ -60,7 +61,7 @@ pub async fn parse_file(bytes: &[u8], filename: &str) -> Result<ParseResult, Par
     }
 
     let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
-    let synonyms = default_synonyms();
+    let synonyms = runtime_synonyms();
 
     let (grid, sheet_name) = match ext.as_str() {
         "csv" | "txt" => {
@@ -161,6 +162,13 @@ pub async fn parse_file(bytes: &[u8], filename: &str) -> Result<ParseResult, Par
         stats: ParseStats { total_rows, parsed_rows, skipped_rows },
         flywheel_events,
     })
+}
+
+fn runtime_synonyms() -> Vec<Vec<String>> {
+    if let Ok(path) = std::env::var("PROKURO_SYNONYMS_PATH") {
+        return load_synonyms(Path::new(&path));
+    }
+    load_synonyms(Path::new("corpus/synonyms.toml"))
 }
 
 #[cfg(test)]
