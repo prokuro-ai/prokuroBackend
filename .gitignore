@@ -7,6 +7,7 @@
 .idea/
 .vscode/
 rust-best-practices/
+awesome-design-md-main/
 .claude/
 # Corpus large files (use Git LFS for committed xlsx)
 # corpus/raw/*.xlsx
@@ -17,5 +18,8 @@ corpus/reports/
 
 # data scraping for BOMs
 bom_data/
-# ^ these are stuff is the FAT files that we scraped from Github. 
+# ^ these are stuff is the FAT files that we scraped from Github.
 # for smaller files to play around with, check corpus/raw/
+
+# Next.js frontend (lives in repo for co-location, but not tracked)
+/prokuroWeb/
