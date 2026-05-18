@@ -22,4 +22,12 @@ bom_data/
 # for smaller files to play around with, check corpus/raw/
 
 # Next.js frontend (lives in repo for co-location, but not tracked)
-/prokuroWeb/
+# prokuroWeb (Next.js app)
+prokuroWeb/.next/
+prokuroWeb/node_modules/
+prokuroWeb/.env.local
+prokuroWeb/.env*.local
+prokuroWeb/.turbo/
+prokuroWeb/coverage/
+prokuroWeb/out/
+prokuroWeb/dist/

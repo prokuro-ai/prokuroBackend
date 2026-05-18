@@ -1,62 +1,53 @@
 # prokuroBackend
 
-BOM parser, Nexar enrichment, and public API gateway.
+Rust backend for BOM parsing + enrichment + analyze API.
 
-**GitHub:** https://github.com/prokuro-ai/prokuroBackend
+## Services
 
-## Layout
+- `prokuro-parser` (`:3001`) parses CSV/XLSX/TXT BOM files.
+- `prokuro-enrichment` (`:3002`) enriches parts (Nexar/Octopart).
+- `prokuro-gateway` (`:3000`) exposes `POST /v1/analyze`.
 
-```
-prokuroBackend/
-  crates/
-    prokuroTypes/       # shared types (from schemas/)
-    prokuroParser/      # CSV/XLSX ingest
-    prokuroEnrichment/  # Nexar enrichment
-    prokuroGateway/     # public BFF
-  schemas/              # JSON Schema + OpenAPI
-  corpus/               # sample BOM files (optional, for manual/batch checks)
-```
-
-## Prerequisites
-
-- Rust 1.75+ (`rustup`)
-
-## Build
+## Quick start
 
 ```bash
 cargo build --workspace
 ```
 
-## Running locally
+### Run backend (3 terminals)
 
-### Option 1: Docker Compose (full stack)
-cp .env.example .env
-# edit .env and add your NEXAR_CLIENT_ID and NEXAR_CLIENT_SECRET
-docker compose up --build
+```bash
+# 1) parser
+PORT=3001 cargo run -p prokuro-parser --bin prokuro-parser
 
-### Option 2: Individual services (for development)
-# Terminal 1 - Parser
-cargo run -p prokuro-parser
-# PORT defaults to 3001
+# 2) enrichment (requires .env with Nexar creds)
+set -a && source .env && set +a && PORT=3002 cargo run -p prokuro-enrichment --bin prokuro-enrichment
 
-# Terminal 2 - Enrichment (requires Nexar credentials)
-NEXAR_CLIENT_ID=xxx NEXAR_CLIENT_SECRET=xxx cargo run -p prokuro-enrichment
-# PORT defaults to 3002
+# 3) gateway
+PORT=3000 PARSER_URL=http://localhost:3001 ENRICHMENT_URL=http://localhost:3002 cargo run -p prokuro-gateway --bin prokuro-gateway
+```
 
-# Terminal 3 - Gateway
-PARSER_URL=http://localhost:3001 ENRICHMENT_URL=http://localhost:3002 cargo run -p prokuro-gateway
-# PORT defaults to 3000
+### Test backend quickly
 
-### Option 3: Test parse endpoint directly
+```bash
 ./scripts/test-parse.sh corpus/raw/openxenium-bom.csv
-
-### Option 4: Test full analyze pipeline
 ./scripts/test-analyze.sh corpus/raw/openxenium-bom.csv
+```
 
-## Docs
+## Frontend in this repo (testing only)
 
-Needs to be filled.
+`prokuroWeb` is a lightweight local testing UI for this backend.
+
+```bash
+cd prokuroWeb
+npm install
+npm run dev
+```
+
+Open `http://localhost:3010`.
+
+The production frontend will live in a separate repo: `prokuro-web`.
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+MIT — see `LICENSE`.
