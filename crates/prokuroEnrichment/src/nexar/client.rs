@@ -1,10 +1,12 @@
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 
 use super::auth::{AuthError, NexarAuth};
 
 const NEXAR_GRAPHQL_URL: &str = "https://api.nexar.com/graphql";
+const OCTOPART_ENDPOINT: &str = "https://octopart.com/api/v4/endpoint";
 const BATCH_SIZE: usize = 20;
 const REQUEST_TIMEOUT_SECS: u64 = 30;
 const RATE_LIMIT_RETRY_DELAY_SECS: u64 = 2;
@@ -21,6 +23,18 @@ const SUP_MULTI_MATCH_QUERY: &str = r#"query SupMultiMatch($queries: [SupPartMat
           inventoryLevel
           factoryLeadDays
         }
+      }
+    }
+  }
+}"#;
+
+const OCTOPART_PART_QUERY: &str = r#"query OctopartPart($mpn: String!) {
+  supSearchMpn(q: $mpn, limit: 1) {
+    results {
+      part {
+        mpn
+        lifecycleStatus
+        estimatedFactoryLeadDays
       }
     }
   }
@@ -89,11 +103,16 @@ pub enum ClientError {
 pub struct NexarClient {
     auth: NexarAuth,
     http: reqwest::Client,
+    octopart_cache: RwLock<HashMap<String, OctopartLifecycle>>,
 }
 
 impl NexarClient {
     pub fn new(auth: NexarAuth) -> Self {
-        Self { auth, http: reqwest::Client::new() }
+        Self {
+            auth,
+            http: reqwest::Client::new(),
+            octopart_cache: RwLock::new(HashMap::new()),
+        }
     }
 
     pub fn from_env() -> Result<Self, AuthError> {
@@ -156,7 +175,7 @@ impl NexarClient {
                     error, body
                 ))
             })?;
-            let mapped = if let Some(data) = parsed.data {
+            let mut mapped = if let Some(data) = parsed.data {
                 map_batch_response(data, batch, batch_index * BATCH_SIZE)
             } else {
                 if let Some(errors) = parsed.errors.as_ref() {
@@ -172,10 +191,127 @@ impl NexarClient {
                 }
                 map_no_match_batch(batch, batch_index * BATCH_SIZE)
             };
+            self
+                .enrich_unknown_lifecycle_with_octopart(&token, &mut mapped)
+                .await;
             all_results.extend(mapped);
         }
 
         Ok(all_results)
+    }
+
+    async fn enrich_unknown_lifecycle_with_octopart(
+        &self,
+        token: &str,
+        results: &mut [MatchResult],
+    ) {
+        for result in results.iter_mut() {
+            if result.lifecycle_status != LifecycleStatus::Unknown {
+                continue;
+            }
+            let Some(mpn) = result.matched_mpn.as_deref() else {
+                continue;
+            };
+            let mpn = mpn.trim();
+            if mpn.is_empty() {
+                continue;
+            }
+            let cache_key = mpn.to_uppercase();
+            let cached = {
+                self.octopart_cache
+                    .read()
+                    .await
+                    .get(&cache_key)
+                    .cloned()
+            };
+            let octopart = match cached {
+                Some(value) => value,
+                None => {
+                    let fetched = match self.fetch_octopart_lifecycle(token, mpn).await {
+                        Ok(value) => value,
+                        Err(error) => {
+                            tracing::warn!(%error, %mpn, "octopart lifecycle lookup failed");
+                            OctopartLifecycle::default()
+                        }
+                    };
+                    self.octopart_cache
+                        .write()
+                        .await
+                        .insert(cache_key, fetched.clone());
+                    fetched
+                }
+            };
+
+            result.lifecycle_status = octopart.lifecycle_status;
+            if result.factory_lead_days.is_none() {
+                result.factory_lead_days = octopart.estimated_factory_lead_days;
+            }
+        }
+    }
+
+    async fn fetch_octopart_lifecycle(
+        &self,
+        token: &str,
+        mpn: &str,
+    ) -> Result<OctopartLifecycle, ClientError> {
+        let response = self
+            .http
+            .post(OCTOPART_ENDPOINT)
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .header("authorization", format!("Bearer {}", token))
+            .json(&serde_json::json!({
+                "query": OCTOPART_PART_QUERY,
+                "variables": { "mpn": mpn }
+            }))
+            .send()
+            .await
+            .map_err(|error| {
+                if error.is_timeout() {
+                    ClientError::Timeout
+                } else {
+                    ClientError::Request(error.to_string())
+                }
+            })?;
+
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|error| ClientError::Request(error.to_string()))?;
+        if !status.is_success() {
+            return Err(ClientError::Request(format!(
+                "status {} body {}",
+                status.as_u16(),
+                body
+            )));
+        }
+
+        let parsed: OctopartPartResponse = serde_json::from_str(&body).map_err(|error| {
+            ClientError::Request(format!(
+                "failed to parse Octopart response as json: {} body: {}",
+                error, body
+            ))
+        })?;
+
+        if let Some(errors) = parsed.errors {
+            let messages: Vec<&str> = errors.iter().map(|error| error.message.as_str()).collect();
+            tracing::warn!(
+                %mpn,
+                "Octopart returned errors: {}",
+                messages.join(" | ")
+            );
+        }
+
+        let part = parsed
+            .data
+            .and_then(|data| data.sup_search_mpn.results.into_iter().next())
+            .map(|result| result.part)
+            .unwrap_or_default();
+
+        Ok(OctopartLifecycle {
+            lifecycle_status: map_octopart_lifecycle_status(part.lifecycle_status.as_deref()),
+            estimated_factory_lead_days: part.estimated_factory_lead_days,
+        })
     }
 }
 
@@ -220,6 +356,51 @@ struct SupMultiMatchResponse {
 #[derive(Debug, Deserialize)]
 struct GraphQlError {
     message: String,
+}
+
+#[derive(Debug, Clone)]
+struct OctopartLifecycle {
+    lifecycle_status: LifecycleStatus,
+    estimated_factory_lead_days: Option<i32>,
+}
+
+impl Default for OctopartLifecycle {
+    fn default() -> Self {
+        Self {
+            lifecycle_status: LifecycleStatus::Unknown,
+            estimated_factory_lead_days: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct OctopartPartResponse {
+    data: Option<OctopartPartData>,
+    errors: Option<Vec<GraphQlError>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OctopartPartData {
+    #[serde(rename = "supSearchMpn")]
+    sup_search_mpn: OctopartSearchResults,
+}
+
+#[derive(Debug, Deserialize)]
+struct OctopartSearchResults {
+    results: Vec<OctopartSearchResultItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OctopartSearchResultItem {
+    part: OctopartPart,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct OctopartPart {
+    #[serde(rename = "lifecycleStatus")]
+    lifecycle_status: Option<String>,
+    #[serde(rename = "estimatedFactoryLeadDays")]
+    estimated_factory_lead_days: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -420,13 +601,33 @@ fn min_factory_lead_days(part: &SupPart) -> Option<i32> {
         .min()
 }
 
+fn map_octopart_lifecycle_status(value: Option<&str>) -> LifecycleStatus {
+    let Some(raw) = value else {
+        return LifecycleStatus::Unknown;
+    };
+    let normalized = raw.trim();
+    if normalized.eq_ignore_ascii_case("production") {
+        LifecycleStatus::Active
+    } else if normalized.eq_ignore_ascii_case("obsolete") {
+        LifecycleStatus::Eol
+    } else if normalized.eq_ignore_ascii_case("not recommended for new designs")
+        || normalized.eq_ignore_ascii_case("nrnd")
+    {
+        LifecycleStatus::Nrnd
+    } else if normalized.eq_ignore_ascii_case("discontinued") {
+        LifecycleStatus::Discontinued
+    } else {
+        LifecycleStatus::Unknown
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::{
         AvailabilityStatus, LifecycleStatus, MatchInput, MatchStatus, SupMultiMatchResponse,
-        map_batch_response, map_no_match_batch,
+        map_batch_response, map_no_match_batch, map_octopart_lifecycle_status,
     };
 
     const MULTIMATCH_HIT_FIXTURE: &str = r#"{
@@ -616,5 +817,17 @@ mod tests {
         assert_eq!(result[0].top_sellers[0].name, "S2");
         assert_eq!(result[0].top_sellers[1].name, "S4");
         assert_eq!(result[0].top_sellers[2].name, "S3");
+    }
+
+    #[test]
+    fn octopart_lifecycle_mapping_production_and_obsolete() {
+        assert_eq!(
+            map_octopart_lifecycle_status(Some("Production")),
+            LifecycleStatus::Active
+        );
+        assert_eq!(
+            map_octopart_lifecycle_status(Some("Obsolete")),
+            LifecycleStatus::Eol
+        );
     }
 }
