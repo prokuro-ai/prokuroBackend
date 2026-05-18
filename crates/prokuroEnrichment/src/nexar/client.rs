@@ -156,7 +156,22 @@ impl NexarClient {
                     error, body
                 ))
             })?;
-            let mapped = map_batch_response(parsed, batch, batch_index * BATCH_SIZE);
+            let mapped = if let Some(data) = parsed.data {
+                map_batch_response(data, batch, batch_index * BATCH_SIZE)
+            } else {
+                if let Some(errors) = parsed.errors.as_ref() {
+                    let messages: Vec<&str> = errors
+                        .iter()
+                        .map(|error| error.message.as_str())
+                        .collect();
+                    tracing::warn!(
+                        "Nexar returned errors without data for batch {}: {}",
+                        batch_index,
+                        messages.join(" | ")
+                    );
+                }
+                map_no_match_batch(batch, batch_index * BATCH_SIZE)
+            };
             all_results.extend(mapped);
         }
 
@@ -198,7 +213,13 @@ fn build_graphql_request(lines: &[MatchInput]) -> GraphQlRequest {
 
 #[derive(Debug, Deserialize)]
 struct SupMultiMatchResponse {
-    data: SupMultiMatchData,
+    data: Option<SupMultiMatchData>,
+    errors: Option<Vec<GraphQlError>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphQlError {
+    message: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -246,7 +267,7 @@ struct SupOffer {
 }
 
 fn map_batch_response(
-    response: SupMultiMatchResponse,
+    response: SupMultiMatchData,
     inputs: &[MatchInput],
     global_start_index: usize,
 ) -> Vec<MatchResult> {
@@ -255,12 +276,30 @@ fn map_batch_response(
         .enumerate()
         .map(|(idx, input)| {
             let hits = response
-                .data
                 .sup_multi_match
                 .get(idx)
                 .map(|item| item.parts.as_slice())
                 .unwrap_or(&[]);
             map_one_result(hits, input, global_start_index + idx)
+        })
+        .collect()
+}
+
+fn map_no_match_batch(inputs: &[MatchInput], global_start_index: usize) -> Vec<MatchResult> {
+    inputs
+        .iter()
+        .enumerate()
+        .map(|(idx, _)| MatchResult {
+            input_index: global_start_index + idx,
+            nexar_part_id: None,
+            matched_mpn: None,
+            matched_manufacturer: None,
+            match_status: MatchStatus::None,
+            total_avail: 0,
+            availability_status: AvailabilityStatus::NoMatch,
+            lifecycle_status: LifecycleStatus::Unknown,
+            factory_lead_days: None,
+            top_sellers: Vec::new(),
         })
         .collect()
 }
@@ -387,7 +426,7 @@ mod tests {
 
     use super::{
         AvailabilityStatus, LifecycleStatus, MatchInput, MatchStatus, SupMultiMatchResponse,
-        map_batch_response,
+        map_batch_response, map_no_match_batch,
     };
 
     const MULTIMATCH_HIT_FIXTURE: &str = r#"{
@@ -426,6 +465,15 @@ mod tests {
       }
     }"#;
 
+    const MULTIMATCH_ERROR_FIXTURE: &str = r#"{
+      "errors": [
+        {
+          "message": "You have exceeded your part limit of 10. Please upgrade your plan."
+        }
+      ],
+      "data": null
+    }"#;
+
     #[test]
     fn hit_maps_to_in_stock_active() {
         let payload = MULTIMATCH_HIT_FIXTURE;
@@ -436,7 +484,7 @@ mod tests {
             manufacturer: Some("Murata".to_string()),
         }];
 
-        let result = map_batch_response(response, &inputs, 0);
+        let result = map_batch_response(response.data.expect("fixture should include data"), &inputs, 0);
 
         assert_eq!(result[0].availability_status, AvailabilityStatus::InStock);
         assert_eq!(result[0].match_status, MatchStatus::Exact);
@@ -454,10 +502,36 @@ mod tests {
             manufacturer: Some("Unknown".to_string()),
         }];
 
-        let result = map_batch_response(response, &inputs, 0);
+        let result = map_batch_response(response.data.expect("fixture should include data"), &inputs, 0);
 
         assert_eq!(result[0].availability_status, AvailabilityStatus::NoMatch);
         assert_eq!(result[0].match_status, MatchStatus::None);
+    }
+
+    #[test]
+    fn graphql_errors_without_data_map_to_no_match_batch() {
+        let response: SupMultiMatchResponse =
+            serde_json::from_str(MULTIMATCH_ERROR_FIXTURE).expect("fixture should deserialize");
+        assert!(response.data.is_none());
+        assert!(response.errors.is_some());
+
+        let inputs = vec![
+            MatchInput {
+                mpn: "LM393P".to_string(),
+                manufacturer: Some("Texas Instruments".to_string()),
+            },
+            MatchInput {
+                mpn: "ATMEGA4809-AFR".to_string(),
+                manufacturer: None,
+            },
+        ];
+
+        let result = map_no_match_batch(&inputs, 0);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].availability_status, AvailabilityStatus::NoMatch);
+        assert_eq!(result[0].match_status, MatchStatus::None);
+        assert_eq!(result[1].availability_status, AvailabilityStatus::NoMatch);
+        assert_eq!(result[1].match_status, MatchStatus::None);
     }
 
     #[test]
@@ -470,7 +544,7 @@ mod tests {
             manufacturer: Some("Murata".to_string()),
         }];
 
-        let result = map_batch_response(response, &inputs, 0);
+        let result = map_batch_response(response.data.expect("fixture should include data"), &inputs, 0);
 
         assert_eq!(result[0].lifecycle_status, LifecycleStatus::Unknown);
     }
@@ -505,7 +579,7 @@ mod tests {
             manufacturer: Some("Murata".to_string()),
         }];
 
-        let result = map_batch_response(response, &inputs, 0);
+        let result = map_batch_response(response.data.expect("fixture should include data"), &inputs, 0);
 
         assert_eq!(result[0].factory_lead_days, Some(14));
     }
@@ -536,7 +610,7 @@ mod tests {
             manufacturer: Some("Murata".to_string()),
         }];
 
-        let result = map_batch_response(response, &inputs, 0);
+        let result = map_batch_response(response.data.expect("fixture should include data"), &inputs, 0);
 
         assert_eq!(result[0].top_sellers.len(), 3);
         assert_eq!(result[0].top_sellers[0].name, "S2");
