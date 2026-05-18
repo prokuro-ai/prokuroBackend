@@ -240,7 +240,7 @@ fn write_batch_results(reports_dir: &Path, results: &[FileResult]) {
         }
     }
     let mut failure_reasons_sorted: Vec<(String, usize)> = failure_reasons.into_iter().collect();
-    failure_reasons_sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    failure_reasons_sorted.sort_by_key(|entry| std::cmp::Reverse(entry.1));
 
     // Top 10 column header patterns.
     let mut header_counts: HashMap<String, usize> = HashMap::new();
@@ -250,7 +250,7 @@ fn write_batch_results(reports_dir: &Path, results: &[FileResult]) {
         }
     }
     let mut header_sorted: Vec<(String, usize)> = header_counts.into_iter().collect();
-    header_sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    header_sorted.sort_by_key(|entry| std::cmp::Reverse(entry.1));
     let top_headers: Vec<(String, usize)> = header_sorted.into_iter().take(10).collect();
 
     // Sample of up to 5 failed files with errors.
