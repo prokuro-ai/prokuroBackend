@@ -23,11 +23,11 @@ bom_data/
 
 # Next.js frontend (lives in repo for co-location, but not tracked)
 # prokuroWeb (Next.js app)
-prokuroWeb/.next/
-prokuroWeb/node_modules/
-prokuroWeb/.env.local
-prokuroWeb/.env*.local
-prokuroWeb/.turbo/
-prokuroWeb/coverage/
-prokuroWeb/out/
-prokuroWeb/dist/
+prokuroWeb-test-ui/.next/
+prokuroWeb-test-ui/node_modules/
+prokuroWeb-test-ui/.env.local
+prokuroWeb-test-ui/.env*.local
+prokuroWeb-test-ui/.turbo/
+prokuroWeb-test-ui/coverage/
+prokuroWeb-test-ui/out/
+prokuroWeb-test-ui/dist/
