@@ -1,0 +1,3 @@
+# Intentionally left without unsupported keys.
+# Warning denial is enforced in CI and local runs via:
+# cargo clippy --workspace -- -D warnings

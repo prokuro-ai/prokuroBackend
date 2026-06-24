@@ -1,0 +1,18 @@
+{
+  "headerRowIndex": 0,
+  "sheetName": null,
+  "delimiter": ",",
+  "columnMapping": {
+    "References": "reference",
+    "Quantity Per PCB": "qty",
+    "Value": "value",
+    "Footprint": "footprint",
+    "Description": "description",
+    "MPN": "mpn",
+    "Manufacturer": "manufacturer",
+    "LCSC PN": "lcsc_pn",
+    "Digi-Key_PN": "digikey_pn",
+    "Datasheet": "datasheet"
+  },
+  "notes": "CO60 open-hardware 60% keyboard PCB BOM, KiCad plugin export. Component column contains a row index. Real TDK, Samsung MLCC MPNs with both LCSC and Digi-Key part numbers."
+}

@@ -1,0 +1,88 @@
+import os, re, time, json, requests, pandas as pd
+from pathlib import Path
+from urllib.parse import quote
+
+OUT = Path("bom_data")
+RAW = OUT / "raw"
+OUT.mkdir(exist_ok=True); RAW.mkdir(exist_ok=True)
+
+QUERIES = [
+    '"Manufacturer Part Number" "Quantity"',
+    '"Designator" "Qty" "MPN"',
+    '"BOM.csv"',
+    '"bill of materials" "MPN"',
+]
+
+def grep_search(q, page=1):
+    url = f"https://grep.app/api/search?q={quote(q)}&page={page}"
+    return requests.get(url, timeout=30).json()
+
+def raw_github_url(repo, path, branch="master"):
+    return f"https://raw.githubusercontent.com/{repo}/{branch}/{path}"
+
+def extract_results(js):
+    hits = js.get("hits", {}).get("hits", [])
+:wqX^X6X
+::Xxxcleaer
+c    for h in hits:
+        repo = h["repo"]["raw"]
+        path = h["path"]["raw"]
+        branch = h.get("branch", {}).get("raw", "master")
+        if re.search(r"(bom|bill.of.materials).*\.(csv|xlsx?)$", path, re.I):
+            yield repo, path, branch
+
+seen = set()
+files = []
+
+for q in QUERIES:
+    for page in range(1, 8):
+        try:
+            js = grep_search(q, page)
+            for repo, path, branch in extract_results(js):
+                key = (repo, path)
+                if key in seen: 
+                    continue
+                seen.add(key)
+
+                url = raw_github_url(repo, path, branch)
+                ext = path.split(".")[-1].lower()
+                fname = RAW / f"{repo.replace('/','__')}__{Path(path).name}"
+
+                r = requests.get(url, timeout=30)
+                if r.status_code == 200 and len(r.content) > 50:
+                    fname.write_bytes(r.content)
+                    files.append((repo, path, str(fname)))
+                    print("saved", fname)
+                time.sleep(0.3)
+        except Exception as e:
+            print("skip", q, page, e)
+
+rows = []
+for repo, path, f in files:
+    try:
+        if f.lower().endswith(".csv"):
+            df = pd.read_csv(f, on_bad_lines="skip")
+        else:
+            df = pd.read_excel(f)
+
+        df.columns = [str(c).strip().lower() for c in df.columns]
+        mpn_col = next((c for c in df.columns if c in ["mpn","manufacturer part number","mfg part number","part number"]), None)
+        qty_col = next((c for c in df.columns if c in ["qty","quantity","qnty"]), None)
+
+        if mpn_col:
+            for _, r in df.iterrows():
+                mpn = str(r.get(mpn_col, "")).strip()
+                if mpn and mpn.lower() not in ["nan", "none"]:
+                    rows.append({
+                        "repo": repo,
+                        "source_file": path,
+                        "mpn": mpn,
+                        "quantity": r.get(qty_col, "") if qty_col else "",
+                    })
+    except Exception as e:
+        print("parse fail", f, e)
+
+out = pd.DataFrame(rows).drop_duplicates()
+out.to_csv(OUT / "normalized_bom_lines.csv", index=False)
+print(f"\nDone. Files: {len(files)} | BOM lines: {len(out)}")
+print("Output:", OUT / "normalized_bom_lines.csv")

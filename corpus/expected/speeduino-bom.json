@@ -1,0 +1,15 @@
+{
+  "headerRowIndex": 0,
+  "sheetName": null,
+  "delimiter": ",",
+  "columnMapping": {
+    "Reference": "reference",
+    " Quantity": "qty",
+    " Value": "value",
+    " Footprint": "footprint",
+    " Manufacturer_Name": "manufacturer",
+    " Manufacturer_Part_Number": "mpn",
+    " Description": "description"
+  },
+  "notes": "Speeduino open-source ECU BOM exported from KiCad. Headers from column 2 onward have a leading space (CSV uses ', ' spacing). Real Yageo, Kemet, Samsung, AVX MPNs with Digikey URLs in the URL column."
+}

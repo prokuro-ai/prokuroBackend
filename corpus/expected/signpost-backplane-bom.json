@@ -1,0 +1,18 @@
+{
+  "headerRowIndex": 5,
+  "sheetName": null,
+  "delimiter": ",",
+  "columnMapping": {
+    "Qty": "qty",
+    "Part Reference": "reference",
+    "Do Not Insert": "dni",
+    "Value": "value",
+    "Package": "footprint",
+    "Description": "description",
+    "MPN": "mpn",
+    "Manufacturer": "manufacturer",
+    "DIGIKEY": "digikey_pn",
+    "MOUSER": "mouser_pn"
+  },
+  "notes": "Signpost IoT platform backplane BOM (lab11/signpost rev D). Four comment rows beginning with '#' plus one blank row precede the data header, placing the header at row index 5. Has 'Do Not Insert' (DNI) and 'Can Substitue?' (sic) qualifier columns. Multiple distributor columns: DIGIKEY, DIGIKEY2, MOUSER, NEWARK. Final non-data rows contain fiducials/solder jumper and a trailing note row. Real Samsung, Murata, Texas Instruments, Sullins, Abracon MPNs with Digi-Key part numbers."
+}

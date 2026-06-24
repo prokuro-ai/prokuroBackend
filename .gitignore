@@ -7,6 +7,27 @@
 .idea/
 .vscode/
 rust-best-practices/
+awesome-design-md-main/
 .claude/
 # Corpus large files (use Git LFS for committed xlsx)
 # corpus/raw/*.xlsx
+.env
+crates/prokuroEnrichment/src/nexar/fixtures/
+crates/prokuroEnrichment/tests/fixtures/nexar/
+corpus/reports/
+
+# data scraping for BOMs
+bom_data/
+# ^ these are stuff is the FAT files that we scraped from Github.
+# for smaller files to play around with, check corpus/raw/
+
+# Next.js frontend (lives in repo for co-location, but not tracked)
+# prokuroWeb (Next.js app)
+prokuroWeb-test-ui/.next/
+prokuroWeb-test-ui/node_modules/
+prokuroWeb-test-ui/.env.local
+prokuroWeb-test-ui/.env*.local
+prokuroWeb-test-ui/.turbo/
+prokuroWeb-test-ui/coverage/
+prokuroWeb-test-ui/out/
+prokuroWeb-test-ui/dist/

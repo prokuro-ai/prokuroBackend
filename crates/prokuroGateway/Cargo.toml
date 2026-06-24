@@ -9,3 +9,18 @@ repository.workspace = true
 [[bin]]
 name = "prokuro-gateway"
 path = "src/main.rs"
+
+[dependencies]
+axum = { version = "*", features = ["multipart"] }
+tokio = { version = "*", features = ["full"] }
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+reqwest = { version = "*", features = ["json", "multipart"] }
+thiserror = "*"
+tracing = "*"
+tracing-subscriber = "*"
+tower-http = { version = "*", features = ["trace"] }
+uuid = { version = "*", features = ["v4"] }
+
+[dev-dependencies]
+tower = "*"

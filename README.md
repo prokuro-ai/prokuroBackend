@@ -1,36 +1,53 @@
 # prokuroBackend
 
-BOM parser, Nexar enrichment, and public API gateway.
+Rust backend for BOM parsing + enrichment + analyze API.
 
-**GitHub:** https://github.com/prokuro-ai/prokuroBackend
+## Services
 
-## Layout
+- `prokuro-parser` (`:3001`) parses CSV/XLSX/TXT BOM files.
+- `prokuro-enrichment` (`:3002`) enriches parts (Nexar/Octopart).
+- `prokuro-gateway` (`:3000`) exposes `POST /v1/analyze`.
 
-```
-prokuroBackend/
-  crates/
-    prokuroTypes/       # shared types (from schemas/)
-    prokuroParser/      # CSV/XLSX ingest
-    prokuroEnrichment/  # Nexar enrichment
-    prokuroGateway/     # public BFF
-  schemas/              # JSON Schema + OpenAPI
-  corpus/               # sample BOM files (optional, for manual/batch checks)
-```
-
-## Prerequisites
-
-- Rust 1.75+ (`rustup`)
-
-## Build
+## Quick start
 
 ```bash
 cargo build --workspace
 ```
 
-## Docs
+### Run backend (3 terminals)
 
-Needs to be filled.
+```bash
+# 1) parser
+PORT=3001 cargo run -p prokuro-parser --bin prokuro-parser
+
+# 2) enrichment (requires .env with Nexar creds)
+set -a && source .env && set +a && PORT=3002 cargo run -p prokuro-enrichment --bin prokuro-enrichment
+
+# 3) gateway
+PORT=3000 PARSER_URL=http://localhost:3001 ENRICHMENT_URL=http://localhost:3002 cargo run -p prokuro-gateway --bin prokuro-gateway
+```
+
+### Test backend quickly
+
+```bash
+./scripts/test-parse.sh corpus/raw/openxenium-bom.csv
+./scripts/test-analyze.sh corpus/raw/openxenium-bom.csv
+```
+
+## Frontend in this repo (testing only)
+
+`prokuroWeb` is a lightweight local testing UI for this backend.
+
+```bash
+cd prokuroWeb
+npm install
+npm run dev
+```
+
+Open `http://localhost:3010`.
+
+The production frontend will live in a separate repo: `prokuro-web`.
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+MIT — see `LICENSE`.

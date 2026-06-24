@@ -1,0 +1,13 @@
+{
+  "headerRowIndex": 0,
+  "sheetName": null,
+  "delimiter": ",",
+  "columnMapping": {
+    "Description": "description",
+    "Manufacturer": "manufacturer",
+    "Manufacturer Part": "mpn",
+    "Supplier": "supplier",
+    "Supplier Part": "supplier_pn"
+  },
+  "notes": "xmas-icetube open-source VFD Christmas clock BOM. All field values are double-quoted throughout the file. 'Name' is the reference/designator column (e.g., \"C1,C3,C10,C11\", \"IC1\") but is not in the synonym list because 'name' is too generic — this is a known parser gap. 'Manufacturer Part' is a non-standard synonym for MPN. Includes non-electronic rows (PCBs from OSH Park, acrylic case, hardware fasteners) with empty Manufacturer Part fields. Two rows explicitly state 'removed from design'. Real MPNs include Atmel ATMEGA328P-PU, Maxim MAX6921AQI+, Murata 13R225C, Yageo CFR/MFR series, Panasonic ECA/EEU series, ON Semiconductor, Fairchild, Vishay, AVX."
+}
