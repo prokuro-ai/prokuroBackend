@@ -29,7 +29,6 @@ services:
       - PORT=3000
       - PARSER_URL=http://parser:3001
       - ENRICHMENT_URL=http://enrichment:3002
-      - CORS_ORIGINS=http://localhost:3000,http://localhost:3001
     depends_on:
       - parser
       - enrichment

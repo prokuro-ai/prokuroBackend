@@ -1,4 +1,5 @@
-FROM rust:1.78-slim AS builder
+# 1.86+ required: Cargo.lock ICU/idna crates need rustc 1.86
+FROM rust:1.86-slim AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
