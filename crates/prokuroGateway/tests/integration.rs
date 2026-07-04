@@ -2,9 +2,14 @@ use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
+async fn test_app() -> axum::Router {
+    let state = prokuro_gateway::build_app_state().await;
+    prokuro_gateway::app((*state).clone())
+}
+
 #[tokio::test]
 async fn health_returns_ok() {
-    let app = prokuro_gateway::app();
+    let app = test_app().await;
     let request = Request::builder()
         .method("GET")
         .uri("/health")
@@ -24,7 +29,7 @@ async fn health_returns_ok() {
 
 #[tokio::test]
 async fn analyze_returns_422_on_missing_file() {
-    let app = prokuro_gateway::app();
+    let app = test_app().await;
     let boundary = "boundary123";
     let request = Request::builder()
         .method("POST")
@@ -44,5 +49,21 @@ async fn analyze_returns_422_on_missing_file() {
     assert!(
         response.status() == StatusCode::UNPROCESSABLE_ENTITY
             || response.status() == StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
+async fn list_boms_requires_auth() {
+    let app = test_app().await;
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/boms")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app.oneshot(request).await.expect("list should respond");
+    assert!(
+        response.status() == StatusCode::UNAUTHORIZED
+            || response.status() == StatusCode::SERVICE_UNAVAILABLE
     );
 }

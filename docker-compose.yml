@@ -29,6 +29,16 @@ services:
       - PORT=3000
       - PARSER_URL=http://parser:3001
       - ENRICHMENT_URL=http://enrichment:3002
+      - BOM_STORAGE_PATH=/data/boms
+      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
+      - COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID:-}
+      - COGNITO_REGION=${COGNITO_REGION:-us-west-2}
+      - AWS_REGION=${AWS_REGION:-us-west-2}
+    volumes:
+      - bom-data:/data/boms
     depends_on:
       - parser
       - enrichment
+
+volumes:
+  bom-data:

@@ -1,4 +1,7 @@
-use axum::extract::Multipart;
+use std::sync::Arc;
+
+use axum::body::Body;
+use axum::extract::{Multipart, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -6,11 +9,16 @@ use axum::{Json, Router};
 use serde_json::json;
 
 use analyze::{AnalyzeResult, merge};
+use boms::handlers::{create_bom, get_bom, list_boms};
 use clients::enrichment::{EnrichInput, EnrichmentClient};
 use clients::parser::ParserClient;
+use state::AppState;
 
 pub mod analyze;
+pub mod auth;
+pub mod boms;
 pub mod clients;
+pub mod state;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GatewayError {
@@ -24,10 +32,14 @@ pub enum GatewayError {
     EnrichmentTimeout,
 }
 
-pub fn app() -> Router {
+pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/v1/parse", post(parse_handler))
         .route("/v1/analyze", post(analyze_handler))
+        .route("/v1/boms", get(list_boms).post(create_bom))
+        .route("/v1/boms/{id}", get(get_bom))
+        .with_state(state)
 }
 
 async fn health() -> impl IntoResponse {
@@ -37,7 +49,9 @@ async fn health() -> impl IntoResponse {
     }))
 }
 
-async fn analyze_handler(mut multipart: Multipart) -> impl IntoResponse {
+async fn read_upload(
+    mut multipart: Multipart,
+) -> Result<(String, Vec<u8>), (StatusCode, Json<serde_json::Value>)> {
     let mut file_bytes: Option<Vec<u8>> = None;
     let mut filename = String::from("upload.csv");
 
@@ -51,57 +65,87 @@ async fn analyze_handler(mut multipart: Multipart) -> impl IntoResponse {
                     match field.bytes().await {
                         Ok(bytes) => file_bytes = Some(bytes.to_vec()),
                         Err(error) => {
-                            return (
+                            return Err((
                                 StatusCode::UNPROCESSABLE_ENTITY,
                                 Json(json!({"error": error.to_string()})),
-                            )
-                                .into_response()
+                            ));
                         }
                     }
                 }
             }
             Ok(None) => break,
             Err(error) => {
-                return (
+                return Err((
                     StatusCode::BAD_REQUEST,
                     Json(json!({"error": error.to_string()})),
-                )
-                    .into_response()
+                ));
             }
         }
     }
 
-    let bytes = match file_bytes {
-        Some(bytes) => bytes,
-        None => {
+    match file_bytes {
+        Some(bytes) => Ok((filename, bytes)),
+        None => Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"error": "missing 'file' field"})),
+        )),
+    }
+}
+
+fn parser_error_response(error: GatewayError) -> (StatusCode, Json<serde_json::Value>) {
+    match error {
+        GatewayError::ParserTimeout => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(json!({"error": "parser timed out"})),
+        ),
+        GatewayError::ParserError(message) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": message})),
+        ),
+        _ => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "parser upstream failed"})),
+        ),
+    }
+}
+
+async fn parse_handler(multipart: Multipart) -> impl IntoResponse {
+    let (filename, bytes) = match read_upload(multipart).await {
+        Ok(upload) => upload,
+        Err(response) => return response.into_response(),
+    };
+
+    let parser = ParserClient::from_env();
+    let response = match parser.parse_raw(&filename, bytes).await {
+        Ok(response) => response,
+        Err(error) => return parser_error_response(error).into_response(),
+    };
+
+    let status = StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let body = match response.bytes().await {
+        Ok(bytes) => bytes,
+        Err(error) => {
             return (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(json!({"error": "missing 'file' field"})),
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": error.to_string()})),
             )
-                .into_response()
+                .into_response();
         }
+    };
+
+    (status, Body::from(body)).into_response()
+}
+
+async fn analyze_handler(multipart: Multipart) -> impl IntoResponse {
+    let (filename, bytes) = match read_upload(multipart).await {
+        Ok(upload) => upload,
+        Err(response) => return response.into_response(),
     };
 
     let parser = ParserClient::from_env();
     let parse = match parser.parse(&filename, bytes).await {
         Ok(result) => result,
-        Err(GatewayError::ParserTimeout) => {
-            return (
-                StatusCode::GATEWAY_TIMEOUT,
-                Json(json!({"error": "parser timed out"})),
-            )
-                .into_response()
-        }
-        Err(GatewayError::ParserError(message)) => {
-            return (StatusCode::BAD_GATEWAY, Json(json!({"error": message}))).into_response()
-        }
-        Err(_) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({"error": "parser upstream failed"})),
-            )
-                .into_response()
-        }
+        Err(error) => return parser_error_response(error).into_response(),
     };
 
     if parse.mapping_confidence < 0.3 {
@@ -136,4 +180,8 @@ async fn analyze_handler(mut multipart: Multipart) -> impl IntoResponse {
 
     let merged = merge(parse, enrich);
     Json(merged).into_response()
+}
+
+pub async fn build_app_state() -> Arc<AppState> {
+    Arc::new(AppState::from_env().await)
 }

@@ -9,6 +9,9 @@ use tracing::info_span;
 async fn main() -> Result<(), std::io::Error> {
     tracing_subscriber::fmt::init();
 
+    let state = prokuro_gateway::build_app_state().await;
+    let app = prokuro_gateway::app((*state).clone());
+
     let port = env::var("PORT")
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
@@ -19,7 +22,7 @@ async fn main() -> Result<(), std::io::Error> {
     tracing::info!(%address, "prokuro-gateway listening");
     axum::serve(
         listener,
-        prokuro_gateway::app().layer(
+        app.layer(
             TraceLayer::new_for_http()
                 .make_span_with(|request: &Request<_>| {
                     let request_id = request

@@ -25,26 +25,7 @@ impl ParserClient {
     }
 
     pub async fn parse(&self, filename: &str, bytes: Vec<u8>) -> Result<ParseResult, GatewayError> {
-        let url = format!("{}/v1/parse", self.base_url.trim_end_matches('/'));
-        let form = reqwest::multipart::Form::new().part(
-            "file",
-            reqwest::multipart::Part::bytes(bytes).file_name(filename.to_string()),
-        );
-
-        let response = self
-            .http
-            .post(url)
-            .timeout(Duration::from_secs(10))
-            .multipart(form)
-            .send()
-            .await
-            .map_err(|error| {
-                if error.is_timeout() {
-                    GatewayError::ParserTimeout
-                } else {
-                    GatewayError::ParserError(error.to_string())
-                }
-            })?;
+        let response = self.parse_raw(filename, bytes).await?;
 
         if !response.status().is_success() {
             return Err(GatewayError::ParserError(format!(
@@ -57,6 +38,32 @@ impl ParserClient {
             .json()
             .await
             .map_err(|error| GatewayError::ParserError(error.to_string()))
+    }
+
+    pub async fn parse_raw(
+        &self,
+        filename: &str,
+        bytes: Vec<u8>,
+    ) -> Result<reqwest::Response, GatewayError> {
+        let url = format!("{}/v1/parse", self.base_url.trim_end_matches('/'));
+        let form = reqwest::multipart::Form::new().part(
+            "file",
+            reqwest::multipart::Part::bytes(bytes).file_name(filename.to_string()),
+        );
+
+        self.http
+            .post(url)
+            .timeout(Duration::from_secs(10))
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|error| {
+                if error.is_timeout() {
+                    GatewayError::ParserTimeout
+                } else {
+                    GatewayError::ParserError(error.to_string())
+                }
+            })
     }
 }
 

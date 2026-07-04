@@ -16,6 +16,7 @@ pub fn default_synonyms() -> Vec<Vec<String>> {
             "mpn", "mfr part #", "mfg part #", "mfr. part #", "manf. part #",
             "manufacturer part number", "manufacturer part", "manufacturer pn",
             "part number", "part no", "part #", "pn", "manufacturer sku",
+            "mfg_pn", "mfg pn", "ww_pn", "ww pn",
         ],
         vec!["qty", "quantity", "count", "amount", "q", "number", "number of", "total"],
         vec![
