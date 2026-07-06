@@ -143,6 +143,87 @@ impl BomStore {
         Ok(summary)
     }
 
+    pub async fn delete_bom(&self, account_id: &str, bom_id: &str) -> Result<(), StoreError> {
+        let mut index = self.read_index(account_id).await?;
+        let original_len = index.boms.len();
+        index.boms.retain(|item| item.id != bom_id);
+        if index.boms.len() == original_len {
+            return Err(StoreError::NotFound);
+        }
+        self.write_index(account_id, &index).await?;
+
+        let prefix = self.bom_prefix(account_id, bom_id);
+        self.delete_prefix(&prefix).await
+    }
+
+    async fn delete_prefix(&self, prefix: &str) -> Result<(), StoreError> {
+        match &self.mode {
+            StoreMode::Local { root } => {
+                let path = root.join(prefix);
+                if path.exists() {
+                    tokio::fs::remove_dir_all(path)
+                        .await
+                        .map_err(|error| StoreError::Write(error.to_string()))?;
+                }
+                Ok(())
+            }
+            StoreMode::S3 { client, bucket } => {
+                let mut continuation_token = None;
+                loop {
+                    let mut request = client
+                        .list_objects_v2()
+                        .bucket(bucket)
+                        .prefix(prefix);
+                    if let Some(token) = continuation_token.as_deref() {
+                        request = request.continuation_token(token);
+                    }
+
+                    let response = request
+                        .send()
+                        .await
+                        .map_err(|error| StoreError::Write(error.to_string()))?;
+
+                    let keys: Vec<String> = response
+                        .contents()
+                        .iter()
+                        .filter_map(|object| object.key().map(str::to_string))
+                        .collect();
+
+                    if !keys.is_empty() {
+                        let objects: Vec<_> = keys
+                            .iter()
+                            .filter_map(|key| {
+                                aws_sdk_s3::types::ObjectIdentifier::builder()
+                                    .key(key)
+                                    .build()
+                                    .ok()
+                            })
+                            .collect();
+
+                        client
+                            .delete_objects()
+                            .bucket(bucket)
+                            .delete(
+                                aws_sdk_s3::types::Delete::builder()
+                                    .set_objects(Some(objects))
+                                    .build()
+                                    .map_err(|error| StoreError::Write(error.to_string()))?,
+                            )
+                            .send()
+                            .await
+                            .map_err(|error| StoreError::Write(error.to_string()))?;
+                    }
+
+                    continuation_token = response.next_continuation_token().map(str::to_string);
+                    if continuation_token.is_none() {
+                        break;
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
     fn bom_prefix(&self, account_id: &str, bom_id: &str) -> String {
         format!("{account_id}/{bom_id}")
     }
@@ -252,11 +333,36 @@ impl BomStore {
 
 fn chrono_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let seconds = SystemTime::now()
+    let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    format!("{seconds}Z")
+    unix_to_rfc3339(secs)
+}
+
+fn unix_to_rfc3339(secs: u64) -> String {
+    let days = secs / 86_400;
+    let time = secs % 86_400;
+    let (year, month, day) = civil_from_days(days as i64);
+    let hour = time / 3_600;
+    let minute = (time % 3_600) / 60;
+    let second = time % 60;
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u32;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = y + if m <= 2 { 1 } else { 0 };
+    let month = if m <= 2 { m + 12 } else { m };
+    (year, month, d)
 }
 
 #[cfg(test)]
@@ -309,6 +415,24 @@ mod tests {
         assert!(store.list_boms("account-b").await.unwrap().is_empty());
         assert!(store.get_bom("account-b", "bom-1").await.is_err());
 
+        store
+            .delete_bom("account-a", "bom-1")
+            .await
+            .expect("delete");
+        assert!(store.list_boms("account-a").await.unwrap().is_empty());
+
         std::env::remove_var("BOM_STORAGE_PATH");
+    }
+
+    #[test]
+    fn uploaded_at_is_iso8601() {
+        let value = chrono_now();
+        assert!(value.ends_with('Z'));
+        assert!(value.contains('T'));
+        assert!(is_iso8601_timestamp(&value));
+    }
+
+    fn is_iso8601_timestamp(value: &str) -> bool {
+        value.len() >= 20 && value.chars().nth(4) == Some('-')
     }
 }

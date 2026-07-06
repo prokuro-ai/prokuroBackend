@@ -190,6 +190,27 @@ async fn read_bom_upload(
     })
 }
 
+pub async fn delete_bom(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(bom_id): Path<String>,
+) -> impl IntoResponse {
+    let user = match authenticate(state.auth.as_ref(), &headers).await {
+        Ok(user) => user,
+        Err(response) => return response.into_response(),
+    };
+
+    match state.bom_store.delete_bom(&user.account_id, &bom_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(StoreError::NotFound) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "BOM not found" })),
+        )
+            .into_response(),
+        Err(error) => store_error_response(error).into_response(),
+    }
+}
+
 fn store_error_response(error: StoreError) -> (StatusCode, Json<serde_json::Value>) {
     tracing::error!(%error, "bom store error");
     (

@@ -9,7 +9,7 @@ use axum::{Json, Router};
 use serde_json::json;
 
 use analyze::{AnalyzeResult, merge};
-use boms::handlers::{create_bom, get_bom, list_boms};
+use boms::handlers::{create_bom, delete_bom, get_bom, list_boms};
 use clients::enrichment::{EnrichInput, EnrichmentClient};
 use clients::parser::ParserClient;
 use state::AppState;
@@ -38,7 +38,7 @@ pub fn app(state: AppState) -> Router {
         .route("/v1/parse", post(parse_handler))
         .route("/v1/analyze", post(analyze_handler))
         .route("/v1/boms", get(list_boms).post(create_bom))
-        .route("/v1/boms/{id}", get(get_bom))
+        .route("/v1/boms/{id}", get(get_bom).delete(delete_bom))
         .with_state(state)
 }
 
