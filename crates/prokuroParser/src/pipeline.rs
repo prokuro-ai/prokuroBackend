@@ -5,8 +5,8 @@ use crate::detect::header::find_header_row;
 use crate::detect::sheet::select_sheet;
 use crate::detect::synonyms::load_synonyms;
 use crate::ingest::csv::read_csv;
-use crate::ingest::ParseError as IngestParseError;
 use crate::ingest::xlsx::read_xlsx;
+use crate::ingest::ParseError as IngestParseError;
 use crate::map::columns::{map_columns, ColumnMapping};
 use crate::map::{ParseWarning, WarningCode};
 use crate::normalize::row::{normalize_row, BomLine};
@@ -76,8 +76,8 @@ pub async fn parse_file(bytes: &[u8], filename: &str) -> Result<ParseResult, Par
             if sheets.is_empty() {
                 return Err(ParseError::EmptyFile);
             }
-            let name = select_sheet(&sheets, &synonyms)
-                .or_else(|| sheets.first().map(|(n, _)| n.clone()));
+            let name =
+                select_sheet(&sheets, &synonyms).or_else(|| sheets.first().map(|(n, _)| n.clone()));
             let grid = sheets
                 .into_iter()
                 .find(|(n, _)| Some(n.as_str()) == name.as_deref())
@@ -159,7 +159,11 @@ pub async fn parse_file(bytes: &[u8], filename: &str) -> Result<ParseResult, Par
         mapping_confidence,
         lines,
         warnings,
-        stats: ParseStats { total_rows, parsed_rows, skipped_rows },
+        stats: ParseStats {
+            total_rows,
+            parsed_rows,
+            skipped_rows,
+        },
         flywheel_events,
     })
 }
@@ -198,7 +202,10 @@ mod tests {
         // 10 data rows in the file, all with MPNs → all parsed
         assert_eq!(result.lines.len(), 10);
         assert!(result.mapping_confidence >= 0.7);
-        assert!(!result.warnings.iter().any(|w| w.code == WarningCode::MissingMpn));
+        assert!(!result
+            .warnings
+            .iter()
+            .any(|w| w.code == WarningCode::MissingMpn));
     }
 
     #[tokio::test]

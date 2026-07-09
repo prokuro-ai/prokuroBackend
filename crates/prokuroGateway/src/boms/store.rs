@@ -124,7 +124,8 @@ impl BomStore {
         self.write_json(&format!("{prefix}/analyze.json"), &input.analyze)
             .await?;
         if let Some(parse) = &input.parse {
-            self.write_json(&format!("{prefix}/parse.json"), parse).await?;
+            self.write_json(&format!("{prefix}/parse.json"), parse)
+                .await?;
         }
         self.write_json(
             &format!("{prefix}/metadata.json"),
@@ -170,10 +171,7 @@ impl BomStore {
             StoreMode::S3 { client, bucket } => {
                 let mut continuation_token = None;
                 loop {
-                    let mut request = client
-                        .list_objects_v2()
-                        .bucket(bucket)
-                        .prefix(prefix);
+                    let mut request = client.list_objects_v2().bucket(bucket).prefix(prefix);
                     if let Some(token) = continuation_token.as_deref() {
                         request = request.continuation_token(token);
                     }
@@ -253,7 +251,8 @@ impl BomStore {
     }
 
     async fn write_json<T: Serialize>(&self, key: &str, value: &T) -> Result<(), StoreError> {
-        let bytes = serde_json::to_vec(value).map_err(|error| StoreError::Write(error.to_string()))?;
+        let bytes =
+            serde_json::to_vec(value).map_err(|error| StoreError::Write(error.to_string()))?;
         self.write_bytes(key, bytes, Some("application/json".to_string()))
             .await
     }
@@ -262,15 +261,13 @@ impl BomStore {
         match &self.mode {
             StoreMode::Local { root } => {
                 let path = root.join(key);
-                tokio::fs::read(&path)
-                    .await
-                    .map_err(|error| {
-                        if error.kind() == std::io::ErrorKind::NotFound {
-                            StoreError::NotFound
-                        } else {
-                            StoreError::Read(error.to_string())
-                        }
-                    })
+                tokio::fs::read(&path).await.map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::NotFound {
+                        StoreError::NotFound
+                    } else {
+                        StoreError::Read(error.to_string())
+                    }
+                })
             }
             StoreMode::S3 { client, bucket } => {
                 let response = client
@@ -332,37 +329,7 @@ impl BomStore {
 }
 
 fn chrono_now() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    unix_to_rfc3339(secs)
-}
-
-fn unix_to_rfc3339(secs: u64) -> String {
-    let days = secs / 86_400;
-    let time = secs % 86_400;
-    let (year, month, day) = civil_from_days(days as i64);
-    let hour = time / 3_600;
-    let minute = (time % 3_600) / 60;
-    let second = time % 60;
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
-}
-
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u32;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = y + if m <= 2 { 1 } else { 0 };
-    let month = if m <= 2 { m + 12 } else { m };
-    (year, month, d)
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use calamine::{Data, Reader, Xlsx, XlsxError, open_workbook_from_rs};
+use calamine::{open_workbook_from_rs, Data, Reader, Xlsx, XlsxError};
 
 use super::ParseError;
 

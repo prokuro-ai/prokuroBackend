@@ -1,7 +1,7 @@
 use std::{env, net::SocketAddr, time::Duration};
 
 use axum::{extract::MatchedPath, http::Request};
-use tokio::signal::unix::{SignalKind, signal};
+use tokio::signal::unix::{signal, SignalKind};
 use tower_http::trace::TraceLayer;
 use tracing::info_span;
 
@@ -44,7 +44,9 @@ async fn main() -> Result<(), std::io::Error> {
                     )
                 })
                 .on_response(
-                    |response: &axum::http::Response<_>, latency: Duration, _span: &tracing::Span| {
+                    |response: &axum::http::Response<_>,
+                     latency: Duration,
+                     _span: &tracing::Span| {
                         tracing::info!(
                             status = %response.status().as_u16(),
                             latency_ms = %latency.as_millis(),
@@ -54,8 +56,8 @@ async fn main() -> Result<(), std::io::Error> {
                 ),
         ),
     )
-        .with_graceful_shutdown(shutdown_signal())
-        .await
+    .with_graceful_shutdown(shutdown_signal())
+    .await
 }
 
 async fn shutdown_signal() {

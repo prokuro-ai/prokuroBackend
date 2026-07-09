@@ -28,7 +28,9 @@ async fn main() -> Result<(), std::io::Error> {
 
     tracing::info!(%address, "prokuro-parser listening");
 
-    axum::serve(listener, app()).with_graceful_shutdown(shutdown_signal()).await
+    axum::serve(listener, app())
+        .with_graceful_shutdown(shutdown_signal())
+        .await
 }
 
 fn app() -> Router {
@@ -57,7 +59,9 @@ fn app() -> Router {
                     )
                 })
                 .on_response(
-                    |response: &axum::http::Response<_>, latency: Duration, _span: &tracing::Span| {
+                    |response: &axum::http::Response<_>,
+                     latency: Duration,
+                     _span: &tracing::Span| {
                         tracing::info!(
                             status = %response.status().as_u16(),
                             latency_ms = %latency.as_millis(),

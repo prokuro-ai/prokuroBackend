@@ -184,7 +184,14 @@ async fn main() {
     // Always write the basic table.
     let table_rows: Vec<(String, f32, usize, String)> = results
         .iter()
-        .map(|r| (r.filename.clone(), r.confidence, r.warn_count, r.match_label.clone()))
+        .map(|r| {
+            (
+                r.filename.clone(),
+                r.confidence,
+                r.warn_count,
+                r.match_label.clone(),
+            )
+        })
         .collect();
     let table = render_table(&table_rows);
     print!("{table}");
@@ -214,10 +221,11 @@ async fn main() {
 
 fn write_batch_results(reports_dir: &Path, results: &[FileResult]) {
     let total = results.len();
-    let success: Vec<&FileResult> =
-        results.iter().filter(|r| r.confidence > 0.5).collect();
-    let low_conf: Vec<&FileResult> =
-        results.iter().filter(|r| r.confidence >= 0.3 && r.confidence <= 0.5).collect();
+    let success: Vec<&FileResult> = results.iter().filter(|r| r.confidence > 0.5).collect();
+    let low_conf: Vec<&FileResult> = results
+        .iter()
+        .filter(|r| r.confidence >= 0.3 && r.confidence <= 0.5)
+        .collect();
     let failed: Vec<&FileResult> = results
         .iter()
         .filter(|r| r.error.is_some() || r.confidence < 0.3)
@@ -236,7 +244,9 @@ fn write_batch_results(reports_dir: &Path, results: &[FileResult]) {
             let key = truncate_error(e);
             *failure_reasons.entry(key).or_insert(0) += 1;
         } else if r.confidence < 0.3 {
-            *failure_reasons.entry("very low mapping confidence".to_string()).or_insert(0) += 1;
+            *failure_reasons
+                .entry("very low mapping confidence".to_string())
+                .or_insert(0) += 1;
         }
     }
     let mut failure_reasons_sorted: Vec<(String, usize)> = failure_reasons.into_iter().collect();
@@ -271,7 +281,10 @@ fn write_batch_results(reports_dir: &Path, results: &[FileResult]) {
         "**Low confidence** (0.3–0.5): {}\n\n",
         low_conf.len()
     ));
-    md.push_str(&format!("**Failed** (error or confidence < 0.3): {}\n\n", failed.len()));
+    md.push_str(&format!(
+        "**Failed** (error or confidence < 0.3): {}\n\n",
+        failed.len()
+    ));
 
     md.push_str("## File Type Distribution\n\n");
     md.push_str("| Extension | Count |\n|---|---|\n");
@@ -309,8 +322,7 @@ fn write_batch_results(reports_dir: &Path, results: &[FileResult]) {
         }
     }
 
-    fs::write(reports_dir.join("batch-results.md"), &md)
-        .expect("should write batch-results.md");
+    fs::write(reports_dir.join("batch-results.md"), &md).expect("should write batch-results.md");
 }
 
 fn write_synonym_improvements(
@@ -335,9 +347,7 @@ fn write_synonym_improvements(
 
     let mut md = String::new();
     md.push_str("# Synonym Gaps\n\n");
-    md.push_str(
-        "Column names that appeared in 3+ files but are **not** in `synonyms.toml`.\n",
-    );
+    md.push_str("Column names that appeared in 3+ files but are **not** in `synonyms.toml`.\n");
     md.push_str("These are candidates to add as aliases.\n\n");
     md.push_str("| Column Header | Files Seen In |\n|---|---|\n");
     for (header, count) in &gaps {
@@ -354,7 +364,11 @@ fn write_synonym_improvements(
 fn truncate_error(e: &str) -> String {
     // Collapse long error messages to their first sentence / ~80 chars.
     let s = e.split('.').next().unwrap_or(e).trim();
-    if s.len() > 80 { s[..80].to_string() } else { s.to_string() }
+    if s.len() > 80 {
+        s[..80].to_string()
+    } else {
+        s.to_string()
+    }
 }
 
 fn compare_result(

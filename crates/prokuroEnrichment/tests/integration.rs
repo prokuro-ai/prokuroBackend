@@ -25,7 +25,10 @@ async fn enrich_handler_returns_200_with_mock_data() {
         ))
         .expect("request should build");
 
-    let response = app.oneshot(request).await.expect("request should be handled");
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("request should be handled");
 
     assert_eq!(response.status(), StatusCode::OK);
 }
@@ -48,7 +51,10 @@ async fn enrich_handler_returns_503_when_no_credentials() {
         ))
         .expect("request should build");
 
-    let response = app.oneshot(request).await.expect("request should be handled");
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("request should be handled");
 
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }

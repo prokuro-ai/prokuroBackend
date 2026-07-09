@@ -1,6 +1,6 @@
 use std::{env, net::SocketAddr};
 
-use tokio::signal::unix::{SignalKind, signal};
+use tokio::signal::unix::{signal, SignalKind};
 
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
@@ -14,7 +14,9 @@ async fn main() -> Result<(), std::io::Error> {
     let listener = tokio::net::TcpListener::bind(address).await?;
 
     tracing::info!(%address, "prokuro-enrichment listening");
-    axum::serve(listener, prokuro_enrichment::app()).with_graceful_shutdown(shutdown_signal()).await
+    axum::serve(listener, prokuro_enrichment::app())
+        .with_graceful_shutdown(shutdown_signal())
+        .await
 }
 
 async fn shutdown_signal() {

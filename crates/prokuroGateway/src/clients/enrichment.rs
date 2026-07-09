@@ -14,7 +14,10 @@ pub struct EnrichmentClient {
 
 impl EnrichmentClient {
     pub fn new(base_url: String) -> Self {
-        Self { base_url, http: reqwest::Client::new() }
+        Self {
+            base_url,
+            http: reqwest::Client::new(),
+        }
     }
 
     pub fn from_env() -> Self {

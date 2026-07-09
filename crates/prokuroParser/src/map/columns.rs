@@ -23,13 +23,39 @@ const NEGATIVE: &[&str] = &[
     "arrow",
     "dist pn",
     "distributor",
-    "digi-key",
-    "digi-key pn",
+    "digi key",
+    "digi key pn",
 ];
 
 const ALT_MPN: &[&str] = &["alt mpn", "alternate part", "second source", "alt part"];
+const SUPPLIER_SKU: &[&str] = &[
+    "lcsc",
+    "lcsc pn",
+    "lcsc part",
+    "supplier and ref",
+    "supplier ref",
+    "supplier sku",
+    "supplier part",
+    "supplier part number",
+    "vendor sku",
+    "vendor pn",
+    "vendor part",
+    "distributor sku",
+    "digi key pn",
+    "mouser pn",
+];
+const AMBIGUOUS_IGNORE: &[&str] = &["#", "part", "stage"];
 const WEAK_REFDES: &[&str] = &["id", "item", "item no", "item number", "line", "line no"];
-const WEAK_QTY: &[&str] = &["number", "number of", "total", "units", "unit", "nos", "no.", "no"];
+const WEAK_QTY: &[&str] = &[
+    "number",
+    "number of",
+    "total",
+    "units",
+    "unit",
+    "nos",
+    "no.",
+    "no",
+];
 const STRONG_REFDES: &[&str] = &[
     "refdes",
     "designator",
@@ -42,7 +68,13 @@ const STRONG_REFDES: &[&str] = &[
     "component reference",
     "comp ref",
 ];
-const STRONG_QTY: &[&str] = &["qty", "quantity", "qty.", "quantity per board", "qty per board"];
+const STRONG_QTY: &[&str] = &[
+    "qty",
+    "quantity",
+    "qty.",
+    "quantity per board",
+    "qty per board",
+];
 
 pub fn map_columns(
     header_row: &[String],
@@ -54,17 +86,26 @@ pub fn map_columns(
     let has_strong_refdes = header_row
         .iter()
         .skip(column_offset)
-        .map(|h| h.trim().to_lowercase())
+        .map(|h| normalize_header(h))
         .any(|h| STRONG_REFDES.contains(&h.as_str()));
     let has_strong_qty = header_row
         .iter()
         .skip(column_offset)
-        .map(|h| h.trim().to_lowercase())
+        .map(|h| normalize_header(h))
         .any(|h| STRONG_QTY.contains(&h.as_str()));
 
     for header in header_row.iter().skip(column_offset) {
-        let norm = header.trim().to_lowercase();
+        let norm = normalize_header(header);
         if norm.is_empty() {
+            continue;
+        }
+
+        if SUPPLIER_SKU.contains(&norm.as_str()) {
+            mapping.insert(header.clone(), "supplier_sku".to_string());
+            continue;
+        }
+
+        if AMBIGUOUS_IGNORE.contains(&norm.as_str()) {
             continue;
         }
 
@@ -96,7 +137,7 @@ pub fn map_columns(
         let mut matched = false;
         'exact: for (group_idx, group) in synonyms.iter().enumerate() {
             for alias in group {
-                if *alias == norm {
+                if normalize_header(alias) == norm {
                     if let Some(&(field, _)) = CANONICAL.get(group_idx) {
                         mapping.insert(header.clone(), field.to_string());
                         matched = true;
@@ -115,13 +156,17 @@ pub fn map_columns(
         for (group_idx, group) in synonyms.iter().enumerate() {
             if let Some(&(field, _)) = CANONICAL.get(group_idx) {
                 for alias in group {
-                    if field == "refdes" && WEAK_REFDES.contains(&alias.as_str()) {
+                    let alias_norm = normalize_header(alias);
+                    if field == "refdes" && WEAK_REFDES.contains(&alias_norm.as_str()) {
                         continue;
                     }
-                    if field == "qty" && WEAK_QTY.contains(&alias.as_str()) {
+                    if field == "qty" && WEAK_QTY.contains(&alias_norm.as_str()) {
                         continue;
                     }
-                    let score = jaro_winkler(&norm, alias);
+                    if norm.len() < 5 || alias_norm.len() < 5 {
+                        continue;
+                    }
+                    let score = jaro_winkler(&norm, &alias_norm);
                     if score >= 0.85 && score > best_score {
                         best_score = score;
                         best_field = Some(field);
@@ -151,6 +196,16 @@ pub fn map_columns(
     }
 
     (mapping, confidence, warnings, column_offset)
+}
+
+fn normalize_header(header: &str) -> String {
+    header
+        .trim()
+        .to_lowercase()
+        .replace(['_', '-'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub fn detect_column_offset(header_row: &[String]) -> usize {
@@ -191,10 +246,18 @@ mod tests {
         assert_eq!(mapping.get("Reference").map(String::as_str), Some("refdes"));
         assert_eq!(mapping.get("Qty").map(String::as_str), Some("qty"));
         assert_eq!(mapping.get("Part Number").map(String::as_str), Some("mpn"));
-        assert_eq!(mapping.get("Manufacturer").map(String::as_str), Some("manufacturer"));
-        assert!(!mapping.contains_key("Digikey"), "Digikey should be a warning, not mapped");
+        assert_eq!(
+            mapping.get("Manufacturer").map(String::as_str),
+            Some("manufacturer")
+        );
+        assert!(
+            !mapping.contains_key("Digikey"),
+            "Digikey should be a warning, not mapped"
+        );
         assert!(confidence >= 0.6);
-        assert!(warnings.iter().any(|w| w.code == WarningCode::DistSkuSuspect));
+        assert!(warnings
+            .iter()
+            .any(|w| w.code == WarningCode::DistSkuSuspect));
     }
 
     #[test]
@@ -209,17 +272,20 @@ mod tests {
     }
 
     #[test]
-    fn negative_synonym_emits_dist_sku_suspect() {
+    fn distributor_sku_header_maps_to_supplier_sku() {
         let headers = vec!["Digi-Key PN".to_string(), "mpn".to_string()];
         let synonyms = default_synonyms();
 
         let (mapping, _, warnings, _) = map_columns(&headers, &synonyms);
 
-        assert!(!mapping.contains_key("Digi-Key PN"));
+        assert_eq!(
+            mapping.get("Digi-Key PN").map(String::as_str),
+            Some("supplier_sku")
+        );
         assert_eq!(mapping.get("mpn").map(String::as_str), Some("mpn"));
-        let dist_warn = warnings.iter().find(|w| w.code == WarningCode::DistSkuSuspect);
-        assert!(dist_warn.is_some(), "expected DistSkuSuspect warning");
-        assert_eq!(dist_warn.unwrap().column.as_deref(), Some("Digi-Key PN"));
+        assert!(warnings
+            .iter()
+            .all(|w| w.code != WarningCode::DistSkuSuspect));
     }
 
     #[test]
@@ -231,7 +297,9 @@ mod tests {
 
         // 0.4 + 0.3 = 0.7
         assert!((confidence - 0.7).abs() < 0.001);
-        assert!(warnings.iter().all(|w| w.code != WarningCode::LowMappingConfidence));
+        assert!(warnings
+            .iter()
+            .all(|w| w.code != WarningCode::LowMappingConfidence));
     }
 
     #[test]
@@ -243,7 +311,9 @@ mod tests {
 
         // 0.15 < 0.6
         assert!((confidence - 0.15).abs() < 0.001);
-        assert!(warnings.iter().any(|w| w.code == WarningCode::LowMappingConfidence));
+        assert!(warnings
+            .iter()
+            .any(|w| w.code == WarningCode::LowMappingConfidence));
     }
 
     #[test]
@@ -253,7 +323,10 @@ mod tests {
 
         let (mapping, _, _, _) = map_columns(&headers, &synonyms);
 
-        assert_eq!(mapping.get("Alt MPN").map(String::as_str), Some("alternate_mpn"));
+        assert_eq!(
+            mapping.get("Alt MPN").map(String::as_str),
+            Some("alternate_mpn")
+        );
         assert_eq!(mapping.get("mpn").map(String::as_str), Some("mpn"));
     }
 
@@ -271,36 +344,94 @@ mod tests {
 
         assert_eq!(column_offset, 3);
         assert_eq!(mapping.get("MPN").map(String::as_str), Some("mpn"));
-        assert_eq!(mapping.get("Manufacturer").map(String::as_str), Some("manufacturer"));
+        assert_eq!(
+            mapping.get("Manufacturer").map(String::as_str),
+            Some("manufacturer")
+        );
     }
 
     #[test]
     fn weak_refdes_id_is_ignored_when_designator_exists() {
-        let headers = vec!["Id".to_string(), "Designator".to_string(), "Quantity".to_string()];
+        let headers = vec![
+            "Id".to_string(),
+            "Designator".to_string(),
+            "Quantity".to_string(),
+        ];
         let synonyms = default_synonyms();
         let (mapping, _, _, _) = map_columns(&headers, &synonyms);
 
-        assert_eq!(mapping.get("Designator").map(String::as_str), Some("refdes"));
+        assert_eq!(
+            mapping.get("Designator").map(String::as_str),
+            Some("refdes")
+        );
         assert!(!mapping.contains_key("Id"));
     }
 
     #[test]
     fn fuzzy_link_does_not_map_to_refdes_line_alias() {
-        let headers = vec!["Link".to_string(), "Designator".to_string(), "Qty".to_string()];
+        let headers = vec![
+            "Link".to_string(),
+            "Designator".to_string(),
+            "Qty".to_string(),
+        ];
         let synonyms = default_synonyms();
         let (mapping, _, _, _) = map_columns(&headers, &synonyms);
 
-        assert_eq!(mapping.get("Designator").map(String::as_str), Some("refdes"));
+        assert_eq!(
+            mapping.get("Designator").map(String::as_str),
+            Some("refdes")
+        );
         assert!(!mapping.contains_key("Link"));
     }
 
     #[test]
     fn weak_qty_total_is_ignored_when_qty_exists() {
-        let headers = vec!["Qty".to_string(), "Total".to_string(), "Part Number".to_string()];
+        let headers = vec![
+            "Qty".to_string(),
+            "Total".to_string(),
+            "Part Number".to_string(),
+        ];
         let synonyms = default_synonyms();
         let (mapping, _, _, _) = map_columns(&headers, &synonyms);
 
         assert_eq!(mapping.get("Qty").map(String::as_str), Some("qty"));
         assert!(!mapping.contains_key("Total"));
+    }
+
+    #[test]
+    fn ambiguous_part_header_does_not_fuzzy_match_to_mpn() {
+        let headers = vec!["Part".to_string(), "Product".to_string(), "MPN".to_string()];
+        let synonyms = default_synonyms();
+        let (mapping, _, _, _) = map_columns(&headers, &synonyms);
+
+        assert!(!mapping.contains_key("Part"));
+        assert_eq!(mapping.get("Product").map(String::as_str), Some("mpn"));
+        assert_eq!(mapping.get("MPN").map(String::as_str), Some("mpn"));
+    }
+
+    #[test]
+    fn supplier_sku_headers_are_not_treated_as_mpn() {
+        let headers = vec![
+            "LCSC_Part".to_string(),
+            "Digi-Key_PN".to_string(),
+            "Supplier and ref".to_string(),
+            "MPN".to_string(),
+        ];
+        let synonyms = default_synonyms();
+        let (mapping, _, _, _) = map_columns(&headers, &synonyms);
+
+        assert_eq!(
+            mapping.get("LCSC_Part").map(String::as_str),
+            Some("supplier_sku")
+        );
+        assert_eq!(
+            mapping.get("Digi-Key_PN").map(String::as_str),
+            Some("supplier_sku")
+        );
+        assert_eq!(
+            mapping.get("Supplier and ref").map(String::as_str),
+            Some("supplier_sku")
+        );
+        assert_eq!(mapping.get("MPN").map(String::as_str), Some("mpn"));
     }
 }

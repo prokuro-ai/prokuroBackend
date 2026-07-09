@@ -21,6 +21,7 @@ tracing = "*"
 tracing-subscriber = "*"
 tower-http = { version = "*", features = ["trace"] }
 uuid = { version = "*", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 jsonwebtoken = "9"
 aws-config = "1"
 aws-sdk-s3 = "1"

@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::extract::{Multipart, State};
+use axum::extract::Multipart;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::json;
 
-use analyze::{AnalyzeResult, merge};
+use analyze::{merge, AnalyzeResult};
 use boms::handlers::{create_bom, delete_bom, get_bom, list_boms};
 use clients::enrichment::{EnrichInput, EnrichmentClient};
 use clients::parser::ParserClient;
@@ -98,10 +98,9 @@ fn parser_error_response(error: GatewayError) -> (StatusCode, Json<serde_json::V
             StatusCode::GATEWAY_TIMEOUT,
             Json(json!({"error": "parser timed out"})),
         ),
-        GatewayError::ParserError(message) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error": message})),
-        ),
+        GatewayError::ParserError(message) => {
+            (StatusCode::BAD_GATEWAY, Json(json!({"error": message})))
+        }
         _ => (
             StatusCode::BAD_GATEWAY,
             Json(json!({"error": "parser upstream failed"})),
@@ -121,7 +120,8 @@ async fn parse_handler(multipart: Multipart) -> impl IntoResponse {
         Err(error) => return parser_error_response(error).into_response(),
     };
 
-    let status = StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let status =
+        StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let body = match response.bytes().await {
         Ok(bytes) => bytes,
         Err(error) => {

@@ -34,19 +34,9 @@ PORT=3000 PARSER_URL=http://localhost:3001 ENRICHMENT_URL=http://localhost:3002 
 ./scripts/test-analyze.sh corpus/raw/openxenium-bom.csv
 ```
 
-## Frontend in this repo (testing only)
+## Frontend
 
-`prokuroWeb` is a lightweight local testing UI for this backend.
-
-```bash
-cd prokuroWeb
-npm install
-npm run dev
-```
-
-Open `http://localhost:3010`.
-
-The production frontend will live in a separate repo: `prokuro-web`.
+The production frontend lives in the sibling `prokuroWeb` repository.
 
 ## License
 

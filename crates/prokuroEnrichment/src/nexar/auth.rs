@@ -39,12 +39,16 @@ struct CachedToken {
 
 impl NexarAuth {
     pub fn new(client_id: String, client_secret: String) -> Self {
-        Self { client_id, client_secret, token: Arc::new(Mutex::new(None)) }
+        Self {
+            client_id,
+            client_secret,
+            token: Arc::new(Mutex::new(None)),
+        }
     }
 
     pub fn from_env() -> Result<Self, AuthError> {
-        let client_id =
-            std::env::var(ENV_CLIENT_ID).map_err(|_| AuthError::EnvVarMissing(ENV_CLIENT_ID.to_string()))?;
+        let client_id = std::env::var(ENV_CLIENT_ID)
+            .map_err(|_| AuthError::EnvVarMissing(ENV_CLIENT_ID.to_string()))?;
         let client_secret = std::env::var(ENV_CLIENT_SECRET)
             .map_err(|_| AuthError::EnvVarMissing(ENV_CLIENT_SECRET.to_string()))?;
         Ok(Self::new(client_id, client_secret))
@@ -104,7 +108,10 @@ impl NexarAuth {
         let access_token = body.access_token.ok_or(AuthError::TokenMissing)?;
         let expires_at = Instant::now() + Duration::from_secs(body.expires_in);
 
-        let cached = CachedToken { access_token: access_token.clone(), expires_at };
+        let cached = CachedToken {
+            access_token: access_token.clone(),
+            expires_at,
+        };
         let mut guard = self.token.lock().await;
         *guard = Some(cached);
 
@@ -121,7 +128,9 @@ mod tests {
     use std::sync::{Mutex as StdMutex, OnceLock};
     use std::time::Duration;
 
-    use super::{AuthError, CachedToken, NexarAuth, ENV_CLIENT_ID, ENV_CLIENT_SECRET, is_token_fresh};
+    use super::{
+        is_token_fresh, AuthError, CachedToken, NexarAuth, ENV_CLIENT_ID, ENV_CLIENT_SECRET,
+    };
 
     fn env_lock() -> &'static StdMutex<()> {
         static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();

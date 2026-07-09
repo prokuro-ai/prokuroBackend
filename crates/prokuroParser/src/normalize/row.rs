@@ -34,7 +34,10 @@ pub fn normalize_row(
     let mut extras: HashMap<String, String> = HashMap::new();
 
     for (col_idx, col_header) in header.iter().enumerate() {
-        let cell = raw.get(col_idx).map(|s| s.trim().to_string()).unwrap_or_default();
+        let cell = raw
+            .get(col_idx)
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
         if let Some(canonical) = mapping.get(col_header) {
             match canonical_values.get_mut(canonical.as_str()) {
                 Some(existing) => {
@@ -54,7 +57,10 @@ pub fn normalize_row(
     }
 
     let mpn_raw = canonical_values.remove("mpn").unwrap_or_default();
-    let description = canonical_values.remove("description").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let description = canonical_values
+        .remove("description")
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
 
     // Skip rows where both MPN and description are empty
     if mpn_raw.is_empty() && description.is_none() {
@@ -75,7 +81,8 @@ pub fn normalize_row(
 
         // AML split on comma or pipe
         let parts: Vec<String> = if upper.contains(',') || upper.contains('|') {
-            upper.split([',', '|'])
+            upper
+                .split([',', '|'])
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect()
@@ -83,12 +90,20 @@ pub fn normalize_row(
             vec![]
         };
 
-        let primary = if parts.is_empty() { upper.clone() } else { parts[0].clone() };
-        let candidates = if parts.len() > 1 { parts[1..].to_vec() } else { vec![] };
+        let primary = if parts.is_empty() {
+            upper.clone()
+        } else {
+            parts[0].clone()
+        };
+        let candidates = if parts.len() > 1 {
+            parts[1..].to_vec()
+        } else {
+            vec![]
+        };
 
         // Distributor SKU detection: starts with digits then dash, or known prefix
-        let is_dist_sku = DIST_PREFIXES.iter().any(|p| primary.starts_with(p))
-            || looks_like_dist_sku(&primary);
+        let is_dist_sku =
+            DIST_PREFIXES.iter().any(|p| primary.starts_with(p)) || looks_like_dist_sku(&primary);
         if is_dist_sku {
             warnings.push(ParseWarning {
                 code: WarningCode::DistSkuSuspect,
@@ -101,10 +116,16 @@ pub fn normalize_row(
         (Some(primary), candidates)
     };
 
-    let manufacturer = canonical_values.remove("manufacturer").filter(|s| !s.is_empty());
-    let quantity = canonical_values.remove("qty").and_then(|s| s.trim().parse::<f64>().ok());
+    let manufacturer = canonical_values
+        .remove("manufacturer")
+        .filter(|s| !s.is_empty());
+    let quantity = canonical_values
+        .remove("qty")
+        .and_then(|s| s.trim().parse::<f64>().ok());
     let refdes = canonical_values.remove("refdes").filter(|s| !s.is_empty());
-    let footprint = canonical_values.remove("footprint").filter(|s| !s.is_empty());
+    let footprint = canonical_values
+        .remove("footprint")
+        .filter(|s| !s.is_empty());
 
     // Remaining canonical values (e.g. alternate_mpn) go into extras
     for (k, v) in canonical_values {
@@ -121,7 +142,17 @@ pub fn normalize_row(
     }
 
     (
-        Some(BomLine { mpn, manufacturer, quantity, refdes, description, footprint, aml_candidates, extras, row_index }),
+        Some(BomLine {
+            mpn,
+            manufacturer,
+            quantity,
+            refdes,
+            description,
+            footprint,
+            aml_candidates,
+            extras,
+            row_index,
+        }),
         warnings,
     )
 }
@@ -139,14 +170,7 @@ fn looks_like_cost_summary_row(
     extras: &HashMap<String, String>,
 ) -> bool {
     const COST_KEYWORDS: &[&str] = &[
-        "cost",
-        "price",
-        "subtotal",
-        "total",
-        "jlcpcb",
-        "pcbway",
-        "assembly",
-        "shipping",
+        "cost", "price", "subtotal", "total", "jlcpcb", "pcbway", "assembly", "shipping",
     ];
 
     let mut text = String::new();
@@ -196,12 +220,10 @@ mod tests {
         let (header, mapping) = headers_and_mapping(&["mpn", "qty"]);
 
         let row = |q: &str| {
-            normalize_row(
-                &["X".to_string(), q.to_string()],
-                &mapping,
-                &header,
-                1,
-            ).0.unwrap().quantity
+            normalize_row(&["X".to_string(), q.to_string()], &mapping, &header, 1)
+                .0
+                .unwrap()
+                .quantity
         };
 
         assert_eq!(row("10"), Some(10.0));
@@ -235,7 +257,9 @@ mod tests {
         let raw = vec!["490-1318-1-ND".to_string()];
         let (line, warnings) = normalize_row(&raw, &mapping, &header, 2);
         assert!(line.is_some());
-        assert!(warnings.iter().any(|w| w.code == WarningCode::DistSkuSuspect));
+        assert!(warnings
+            .iter()
+            .any(|w| w.code == WarningCode::DistSkuSuspect));
     }
 
     #[test]
@@ -251,11 +275,13 @@ mod tests {
     #[test]
     fn extras_populated_for_unmapped_columns() {
         let (header, mapping) = headers_and_mapping(&["mpn", "Digi-Key PN"]);
-        // "Digi-Key PN" is a negative synonym — not in mapping, goes to extras if cell non-empty
         let raw = vec!["RC0402".to_string(), "490-1234-1-ND".to_string()];
         let (line, _) = normalize_row(&raw, &mapping, &header, 1);
         let line = line.unwrap();
-        assert_eq!(line.extras.get("Digi-Key PN").map(String::as_str), Some("490-1234-1-ND"));
+        assert_eq!(
+            line.extras.get("supplier_sku").map(String::as_str),
+            Some("490-1234-1-ND")
+        );
     }
 
     #[test]
@@ -273,8 +299,13 @@ mod tests {
 
     #[test]
     fn keeps_first_non_empty_for_duplicate_canonical_fields() {
-        let (header, mapping) = headers_and_mapping(&["MPN", "Manufacturer Part Number", "Description"]);
-        let raw = vec!["".to_string(), "BH3AAPC".to_string(), "Battery Holder".to_string()];
+        let (header, mapping) =
+            headers_and_mapping(&["MPN", "Manufacturer Part Number", "Description"]);
+        let raw = vec![
+            "".to_string(),
+            "BH3AAPC".to_string(),
+            "Battery Holder".to_string(),
+        ];
 
         let (line, _) = normalize_row(&raw, &mapping, &header, 7);
         let line = line.expect("line should parse");

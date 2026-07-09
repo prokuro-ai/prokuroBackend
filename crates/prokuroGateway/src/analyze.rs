@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -64,11 +62,17 @@ pub fn merge(parse: ParseResult, enrich: Vec<EnrichResult>) -> AnalyzeResult {
                 availability_status: enrichment
                     .map(|e| e.availability_status.clone())
                     .unwrap_or_default(),
-                lifecycle_status: enrichment.map(|e| e.lifecycle_status.clone()).unwrap_or_default(),
-                match_status: enrichment.map(|e| e.match_status.clone()).unwrap_or_default(),
+                lifecycle_status: enrichment
+                    .map(|e| e.lifecycle_status.clone())
+                    .unwrap_or_default(),
+                match_status: enrichment
+                    .map(|e| e.match_status.clone())
+                    .unwrap_or_default(),
                 factory_lead_days: enrichment.and_then(|e| e.factory_lead_days),
                 total_avail: enrichment.map(|e| e.total_avail).unwrap_or(0),
-                top_sellers: enrichment.map(|e| e.top_sellers.clone()).unwrap_or_default(),
+                top_sellers: enrichment
+                    .map(|e| e.top_sellers.clone())
+                    .unwrap_or_default(),
             }
         })
         .collect();
@@ -117,9 +121,21 @@ pub fn merge(parse: ParseResult, enrich: Vec<EnrichResult>) -> AnalyzeResult {
 }
 
 fn utc_timestamp_iso_ish() -> String {
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    format!("{}Z", seconds)
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::SecondsFormat;
+
+    #[test]
+    fn analyzed_at_is_iso8601() {
+        let format = |secs: i64| {
+            chrono::DateTime::from_timestamp(secs, 0)
+                .expect("valid timestamp")
+                .to_rfc3339_opts(SecondsFormat::Secs, true)
+        };
+        assert_eq!(format(0), "1970-01-01T00:00:00Z");
+        assert_eq!(format(1_735_689_600), "2025-01-01T00:00:00Z");
+    }
 }

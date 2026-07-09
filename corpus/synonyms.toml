@@ -4,7 +4,7 @@ aliases = [
   "manufacturer part number", "manufacturer part", "manufacturer pn",
   "part number", "part no", "part #", "pn", "manufacturer sku",
   "mfg part number", "manufacturer_part_number", "part_number",
-  "mfg part no", "mfr part number", "mfr. part number",
+  "mfg part no", "mfr part number", "mfr. part number", "product",
 ]
 
 [[group]]
@@ -33,7 +33,7 @@ aliases = [
   "description", "desc", "value", "designation", "device",
   "component", "part description", "specification",
   "component description", "comp description", "item description",
-  "name", "part name", "component name", "item name",
+  "name", "part name", "component name", "item name", "comment",
 ]
 
 [[group]]

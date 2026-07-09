@@ -25,7 +25,9 @@ async fn health() -> impl IntoResponse {
     }))
 }
 
-async fn enrich_handler(payload: Result<Json<Vec<MatchInput>>, JsonRejection>) -> impl IntoResponse {
+async fn enrich_handler(
+    payload: Result<Json<Vec<MatchInput>>, JsonRejection>,
+) -> impl IntoResponse {
     let lines = match payload {
         Ok(Json(lines)) if !lines.is_empty() => lines,
         Ok(_) => {
@@ -56,7 +58,7 @@ async fn enrich_handler(payload: Result<Json<Vec<MatchInput>>, JsonRejection>) -
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({"error": "Nexar credentials not configured"})),
             )
-                .into_response()
+                .into_response();
         }
         Err(error) => {
             tracing::error!(error = %error, "failed to build Nexar client from env");
@@ -64,7 +66,7 @@ async fn enrich_handler(payload: Result<Json<Vec<MatchInput>>, JsonRejection>) -
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({"error": error.to_string()})),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -75,11 +77,9 @@ async fn enrich_handler(payload: Result<Json<Vec<MatchInput>>, JsonRejection>) -
             Json(json!({"error": "request timed out"})),
         )
             .into_response(),
-        Err(ClientError::Request(message)) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error": message})),
-        )
-            .into_response(),
+        Err(ClientError::Request(message)) => {
+            (StatusCode::BAD_GATEWAY, Json(json!({"error": message}))).into_response()
+        }
         Err(ClientError::Auth(error)) => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({"error": error.to_string()})),

@@ -11,10 +11,7 @@ use crate::state::AppState;
 
 use super::store::{CreateBomInput, StoreError};
 
-pub async fn list_boms(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
+pub async fn list_boms(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
     let user = match authenticate(state.auth.as_ref(), &headers).await {
         Ok(user) => user,
         Err(response) => return response.into_response(),
@@ -88,9 +85,7 @@ struct BomUpload {
     name: Option<String>,
 }
 
-async fn read_bom_upload(
-    mut multipart: Multipart,
-) -> Result<BomUpload, axum::response::Response> {
+async fn read_bom_upload(mut multipart: Multipart) -> Result<BomUpload, axum::response::Response> {
     let mut filename = String::from("upload.csv");
     let mut file_bytes: Option<Vec<u8>> = None;
     let mut content_type: Option<String> = None;

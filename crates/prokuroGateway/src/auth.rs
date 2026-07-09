@@ -26,9 +26,7 @@ impl AuthConfig {
         let region = std::env::var("COGNITO_REGION")
             .or_else(|_| std::env::var("AWS_REGION"))
             .unwrap_or_else(|_| "us-west-2".to_string());
-        let issuer = format!(
-            "https://cognito-idp.{region}.amazonaws.com/{user_pool_id}"
-        );
+        let issuer = format!("https://cognito-idp.{region}.amazonaws.com/{user_pool_id}");
         let jwks_url = format!("{issuer}/.well-known/jwks.json");
         Some(Self {
             client_id,
@@ -131,10 +129,7 @@ impl AuthService {
             .send()
             .await
             .map_err(|_| AuthError::InvalidToken)?;
-        let jwks: JwksResponse = response
-            .json()
-            .await
-            .map_err(|_| AuthError::InvalidToken)?;
+        let jwks: JwksResponse = response.json().await.map_err(|_| AuthError::InvalidToken)?;
 
         let mut cache = self.keys.write().await;
         for jwk in jwks.keys {
@@ -152,7 +147,10 @@ pub async fn authenticate(
     headers: &HeaderMap,
 ) -> Result<AuthUser, (StatusCode, String)> {
     let Some(auth) = auth else {
-        return Err((StatusCode::SERVICE_UNAVAILABLE, "auth not configured".into()));
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "auth not configured".into(),
+        ));
     };
 
     auth.authenticate(headers)
@@ -161,9 +159,7 @@ pub async fn authenticate(
             AuthError::MissingHeader | AuthError::InvalidHeader | AuthError::InvalidToken => {
                 (StatusCode::UNAUTHORIZED, error.to_string())
             }
-            AuthError::NotConfigured => {
-                (StatusCode::SERVICE_UNAVAILABLE, error.to_string())
-            }
+            AuthError::NotConfigured => (StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
         })
 }
 

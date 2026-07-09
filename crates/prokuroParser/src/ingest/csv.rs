@@ -30,7 +30,11 @@ pub fn read_csv(bytes: &[u8]) -> Result<Vec<Vec<String>>, ParseError> {
 }
 
 fn strip_utf8_bom(bytes: &[u8]) -> &[u8] {
-    if bytes.starts_with(UTF8_BOM) { &bytes[UTF8_BOM.len()..] } else { bytes }
+    if bytes.starts_with(UTF8_BOM) {
+        &bytes[UTF8_BOM.len()..]
+    } else {
+        bytes
+    }
 }
 
 fn decode_csv_bytes(bytes: &[u8]) -> Result<String, ParseError> {
@@ -48,15 +52,22 @@ fn decode_csv_bytes(bytes: &[u8]) -> Result<String, ParseError> {
 
     let (decoded, _, had_errors) = WINDOWS_1252.decode(utf8_bytes);
     if had_errors {
-        return Err(ParseError::EncodingError(UNSUPPORTED_ENCODING_MESSAGE.to_string()));
+        return Err(ParseError::EncodingError(
+            UNSUPPORTED_ENCODING_MESSAGE.to_string(),
+        ));
     }
     Ok(decoded.into_owned())
 }
 
-fn decode_utf16(bytes: &[u8], encoding: &'static encoding_rs::Encoding) -> Result<String, ParseError> {
+fn decode_utf16(
+    bytes: &[u8],
+    encoding: &'static encoding_rs::Encoding,
+) -> Result<String, ParseError> {
     let (decoded, _, had_errors) = encoding.decode(bytes);
     if had_errors {
-        return Err(ParseError::EncodingError(UNSUPPORTED_ENCODING_MESSAGE.to_string()));
+        return Err(ParseError::EncodingError(
+            UNSUPPORTED_ENCODING_MESSAGE.to_string(),
+        ));
     }
     Ok(decoded.into_owned())
 }
@@ -134,7 +145,10 @@ mod tests {
         let input = b"mpn,desc\nABC-123,\"resistor, 1%\"\n";
         let grid = read_csv(input).expect("quoted field with comma should parse");
 
-        assert_eq!(grid[1], vec!["ABC-123".to_string(), "resistor, 1%".to_string()]);
+        assert_eq!(
+            grid[1],
+            vec!["ABC-123".to_string(), "resistor, 1%".to_string()]
+        );
     }
 
     #[test]
