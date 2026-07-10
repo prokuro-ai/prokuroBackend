@@ -18,15 +18,9 @@ use cache::{cache_key, fan_out, get_cached, line_keys, put_cached, unique_keys};
 use nexar::auth::AuthError;
 use nexar::client::{ClientError, MatchInput, MatchResult, NexarClient};
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct AppState {
     pub cache: Option<PgPool>,
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self { cache: None }
-    }
 }
 
 pub fn app(state: AppState) -> Router {

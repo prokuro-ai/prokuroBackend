@@ -64,10 +64,8 @@ struct Jwk {
 struct CognitoClaims {
     sub: String,
     email: Option<String>,
-    aud: String,
     #[serde(rename = "token_use")]
     token_use: String,
-    iss: String,
 }
 
 pub struct AuthService {

@@ -1,0 +1,24 @@
+[package]
+name = "prokuro-tariff"
+description = "HTS classification and estimated tariff exposure for electronics BOMs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "prokuro-tariff"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "*", features = ["multipart"] }
+tokio = { version = "*", features = ["full"] }
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+thiserror = "*"
+tracing = "*"
+tracing-subscriber = "*"
+tower-http = { version = "*", features = ["trace"] }
+
+[dev-dependencies]
+tower = "*"

@@ -150,10 +150,7 @@ async fn read_bom_upload(mut multipart: Multipart) -> Result<BomUpload, axum::re
                 parse = serde_json::from_str(&text).ok();
             }
             Some("name") => {
-                name = match field.text().await {
-                    Ok(text) => Some(text),
-                    Err(_) => None,
-                };
+                name = field.text().await.ok();
             }
             _ => {}
         }

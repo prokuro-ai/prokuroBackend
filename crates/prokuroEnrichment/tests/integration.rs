@@ -34,10 +34,12 @@ async fn enrich_handler_returns_200_with_mock_data() {
 
 #[tokio::test]
 async fn enrich_handler_returns_503_when_no_credentials() {
-    let _guard = env_lock().lock().expect("env lock should not be poisoned");
-    unsafe {
-        std::env::remove_var("NEXAR_CLIENT_ID");
-        std::env::remove_var("NEXAR_CLIENT_SECRET");
+    {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
+        unsafe {
+            std::env::remove_var("NEXAR_CLIENT_ID");
+            std::env::remove_var("NEXAR_CLIENT_SECRET");
+        }
     }
 
     let app = prokuro_enrichment::app(AppState::default());

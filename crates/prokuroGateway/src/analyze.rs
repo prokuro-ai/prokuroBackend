@@ -42,6 +42,18 @@ pub struct AnalyzedLine {
     pub factory_lead_days: Option<i32>,
     pub total_avail: i64,
     pub top_sellers: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hts_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tariff_confidence: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_duty_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section_301_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_duty_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tariff_notes: Option<String>,
 }
 
 pub fn merge(parse: ParseResult, enrich: Vec<EnrichResult>) -> AnalyzeResult {
@@ -73,6 +85,12 @@ pub fn merge(parse: ParseResult, enrich: Vec<EnrichResult>) -> AnalyzeResult {
                 top_sellers: enrichment
                     .map(|e| e.top_sellers.clone())
                     .unwrap_or_default(),
+                hts_code: None,
+                tariff_confidence: None,
+                base_duty_pct: None,
+                section_301_pct: None,
+                total_duty_pct: None,
+                tariff_notes: None,
             }
         })
         .collect();
@@ -127,6 +145,9 @@ fn utc_timestamp_iso_ish() -> String {
 #[cfg(test)]
 mod tests {
     use chrono::SecondsFormat;
+    use serde_json::json;
+
+    use super::AnalyzedLine;
 
     #[test]
     fn analyzed_at_is_iso8601() {
@@ -137,5 +158,38 @@ mod tests {
         };
         assert_eq!(format(0), "1970-01-01T00:00:00Z");
         assert_eq!(format(1_735_689_600), "2025-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn analyzed_line_omits_tariff_fields_when_none() {
+        let line = AnalyzedLine {
+            row_index: 0,
+            mpn: Some("ABC".into()),
+            manufacturer: None,
+            quantity: None,
+            refdes: None,
+            description: Some("CAP CER".into()),
+            aml_candidates: Vec::new(),
+            availability_status: "InStock".into(),
+            lifecycle_status: "Active".into(),
+            match_status: "Exact".into(),
+            factory_lead_days: None,
+            total_avail: 1,
+            top_sellers: Vec::new(),
+            hts_code: None,
+            tariff_confidence: None,
+            base_duty_pct: None,
+            section_301_pct: None,
+            total_duty_pct: None,
+            tariff_notes: None,
+        };
+        let value = serde_json::to_value(&line).expect("serialize");
+        assert!(value.get("hts_code").is_none());
+        assert!(value.get("tariff_confidence").is_none());
+        assert!(value.get("base_duty_pct").is_none());
+        assert!(value.get("section_301_pct").is_none());
+        assert!(value.get("total_duty_pct").is_none());
+        assert!(value.get("tariff_notes").is_none());
+        assert_eq!(value["mpn"], json!("ABC"));
     }
 }

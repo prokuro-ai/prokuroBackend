@@ -12,6 +12,7 @@ use analyze::{merge, AnalyzeResult};
 use boms::handlers::{create_bom, delete_bom, get_bom, list_boms};
 use clients::enrichment::{EnrichInput, EnrichmentClient};
 use clients::parser::ParserClient;
+use clients::tariff::{TariffClient, TariffInput};
 use state::AppState;
 
 pub mod analyze;
@@ -30,6 +31,10 @@ pub enum GatewayError {
     EnrichmentError(String),
     #[error("enrichment timed out")]
     EnrichmentTimeout,
+    #[error("tariff error: {0}")]
+    TariffError(String),
+    #[error("tariff timed out")]
+    TariffTimeout,
 }
 
 pub fn app(state: AppState) -> Router {
@@ -178,7 +183,41 @@ async fn analyze_handler(multipart: Multipart) -> impl IntoResponse {
         }
     };
 
-    let merged = merge(parse, enrich);
+    let mut merged = merge(parse, enrich);
+
+    if let Some(tariff_client) = TariffClient::from_env() {
+        let tariff_inputs: Vec<TariffInput> = merged
+            .lines
+            .iter()
+            .map(|line| TariffInput {
+                mpn: line.mpn.clone().unwrap_or_default(),
+                description: line.description.clone(),
+                category: None,
+                country_of_origin: None,
+            })
+            .collect();
+
+        match tariff_client.classify(&tariff_inputs).await {
+            Ok(tariff_results) => {
+                for (line, tariff) in merged.lines.iter_mut().zip(tariff_results) {
+                    line.hts_code = tariff.hts_code;
+                    line.tariff_confidence = Some(tariff.confidence);
+                    line.base_duty_pct = tariff.base_duty_pct;
+                    line.section_301_pct = tariff.section_301_pct;
+                    line.total_duty_pct = tariff.total_duty_pct;
+                    line.tariff_notes = tariff.notes;
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "tariff service unavailable; continuing without tariff fields");
+                merged.warnings.push(json!({
+                    "code": "TARIFF_UNAVAILABLE",
+                    "message": error.to_string()
+                }));
+            }
+        }
+    }
+
     Json(merged).into_response()
 }
 
