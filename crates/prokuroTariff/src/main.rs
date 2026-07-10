@@ -14,6 +14,8 @@ async fn main() {
         }
     };
 
+    data.log_staleness_warnings(chrono::Utc::now().date_naive());
+
     let port = env::var("PORT")
         .ok()
         .and_then(|value| value.parse::<u16>().ok())

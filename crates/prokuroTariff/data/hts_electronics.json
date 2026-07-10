@@ -14,427 +14,435 @@
 // general_duty_rate_pct is Column 1 General (MFN). special_rate_programs (when present)
 // is Column 1 Special. Neither includes Section 301, Section 232, IEEPA, or other add-ons.
 
-[
-  {
-    "hts_code": "8542.31.00",
-    "description": "Electronic integrated circuits: Processors and controllers, whether or not combined with memories, converters, logic circuits, amplifiers, clock and timing circuits, or other circuits",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
+{
+  "meta": {
+    "retrieved_at": "2026-07-10",
+    "source_url": "https://hts.usitc.gov/",
+    "reviewed_by": "human",
+    "next_review_due": "2026-10-08"
   },
-  {
-    "hts_code": "8542.32.00",
-    "description": "Electronic integrated circuits: Memories",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8542.33.00",
-    "description": "Electronic integrated circuits: Amplifiers",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8542.39.00",
-    "description": "Electronic integrated circuits: Other",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8541.10.00",
-    "description": "Diodes, other than photosensitive or light-emitting diodes (LED)",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8541.41.00",
-    "description": "Light-emitting diodes (LED)",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8541.42.00",
-    "description": "Photovoltaic cells not assembled in modules or made up into panels",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8541.43.00",
-    "description": "Photovoltaic cells assembled in modules or made up into panels",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8541.21.00",
-    "description": "Transistors, other than photosensitive transistors: With a dissipation rate of less than 1 W",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8541.29.00",
-    "description": "Transistors, other than photosensitive transistors: Other",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8541.30.00",
-    "description": "Thyristors, diacs and triacs, other than photosensitive devices",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8541.60.00",
-    "description": "Mounted piezoelectric crystals",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8532.21.00",
-    "description": "Other fixed capacitors: Tantalum",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8532.22.00",
-    "description": "Other fixed capacitors: Aluminum electrolytic",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8532.24.00",
-    "description": "Other fixed capacitors: Ceramic dielectric, multilayer",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8532.25.00",
-    "description": "Other fixed capacitors: Dielectric of paper or plastics",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8533.10.00",
-    "description": "Fixed carbon resistors, composition or film types",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8533.21.00",
-    "description": "Other fixed resistors: For a power handling capacity not exceeding 20 W",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8533.31.00",
-    "description": "Wirewound variable resistors, including rheostats and potentiometers: For a power handling capacity not exceeding 20 W",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8533.40.00",
-    "description": "Other variable resistors, including rheostats and potentiometers",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8504.31.40",
-    "description": "Other transformers: Having a power handling capacity not exceeding 1 kVA: Having a power handling capacity less than 1 kVA",
-    "general_duty_rate_pct": 6.6,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32",
-    "special_rate_programs": [
-      {
-        "rate_pct": 0.0,
-        "programs": [
-          "A",
-          "AU",
-          "B",
-          "BH",
-          "C",
-          "CL",
-          "CO",
-          "D",
-          "E",
-          "IL",
-          "JO",
-          "KR",
-          "MA",
-          "OM",
-          "P",
-          "PA",
-          "PE",
-          "S",
-          "SG"
-        ]
-      }
-    ]
-  },
-  {
-    "hts_code": "8504.50.80",
-    "description": "Other inductors: Other",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8536.50.90",
-    "description": "Other switches: Other",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8536.41.00",
-    "description": "Relays: For a voltage not exceeding 60 V",
-    "general_duty_rate_pct": 2.7,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32",
-    "special_rate_programs": [
-      {
-        "rate_pct": 0.0,
-        "programs": [
-          "A",
-          "AU",
-          "B",
-          "BH",
-          "CL",
-          "CO",
-          "D",
-          "E",
-          "IL",
-          "JO",
-          "KR",
-          "MA",
-          "OM",
-          "P",
-          "PA",
-          "PE",
-          "S",
-          "SG"
-        ]
-      }
-    ]
-  },
-  {
-    "hts_code": "8536.69.80",
-    "description": "Lamp-holders, plugs and sockets: Other: Other",
-    "general_duty_rate_pct": 2.7,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32",
-    "special_rate_programs": [
-      {
-        "rate_pct": 0.0,
-        "programs": [
-          "A*",
-          "AU",
-          "B",
-          "BH",
-          "CL",
-          "CO",
-          "D",
-          "E",
-          "IL",
-          "JO",
-          "KR",
-          "MA",
-          "OM",
-          "P",
-          "PA",
-          "PE",
-          "S",
-          "SG"
-        ]
-      }
-    ]
-  },
-  {
-    "hts_code": "8536.90.85",
-    "description": "Other apparatus: Other",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8534.00.00",
-    "description": "Printed circuits",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8544.42.90",
-    "description": "Other electric conductors, for a voltage not exceeding 1,000 V: Fitted with connectors: Other",
-    "general_duty_rate_pct": 2.6,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32",
-    "special_rate_programs": [
-      {
-        "rate_pct": 0.0,
-        "programs": [
-          "A",
-          "AU",
-          "B",
-          "BH",
-          "CL",
-          "CO",
-          "D",
-          "E",
-          "IL",
-          "JO",
-          "KR",
-          "MA",
-          "OM",
-          "P",
-          "PA",
-          "PE",
-          "S",
-          "SG"
-        ]
-      }
-    ]
-  },
-  {
-    "hts_code": "8506.50.00",
-    "description": "Primary cells and primary batteries: Lithium",
-    "general_duty_rate_pct": 2.7,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32",
-    "special_rate_programs": [
-      {
-        "rate_pct": 0.0,
-        "programs": [
-          "A",
-          "AU",
-          "BH",
-          "CL",
-          "CO",
-          "D",
-          "E",
-          "IL",
-          "JO",
-          "KR",
-          "MA",
-          "OM",
-          "P",
-          "PA",
-          "PE",
-          "S",
-          "SG"
-        ]
-      }
-    ]
-  },
-  {
-    "hts_code": "8507.60.00",
-    "description": "Electric accumulators: Lithium-ion batteries",
-    "general_duty_rate_pct": 3.4,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32",
-    "special_rate_programs": [
-      {
-        "rate_pct": 0.0,
-        "programs": [
-          "A",
-          "AU",
-          "B",
-          "BH",
-          "C",
-          "CL",
-          "CO",
-          "D",
-          "E",
-          "IL",
-          "JO",
-          "KR",
-          "MA",
-          "OM",
-          "P",
-          "PA",
-          "PE",
-          "S",
-          "SG"
-        ]
-      }
-    ]
-  },
-  {
-    "hts_code": "8518.21.00",
-    "description": "Loudspeakers: Single loudspeakers, mounted in their enclosures",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8518.30.20",
-    "description": "Headphones and earphones, whether or not combined with a microphone: Other",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8517.71.00",
-    "description": "Aerials and aerial reflectors of all kinds; parts suitable for use therewith",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "8529.10.91",
-    "description": "Antennas and antenna reflectors of all kinds; parts suitable for use therewith: Other",
-    "general_duty_rate_pct": 0.0,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32"
-  },
-  {
-    "hts_code": "9032.89.60",
-    "description": "Automatic regulating or controlling instruments and apparatus: Other: Other",
-    "general_duty_rate_pct": 1.7,
-    "source": "USITC HTS",
-    "hts_revision": "2025 HTS Revision 32",
-    "special_rate_programs": [
-      {
-        "rate_pct": 0.0,
-        "programs": [
-          "A",
-          "AU",
-          "B",
-          "BH",
-          "C",
-          "CL",
-          "CO",
-          "D",
-          "E",
-          "IL",
-          "JO",
-          "KR",
-          "MA",
-          "OM",
-          "P",
-          "PA",
-          "PE",
-          "S",
-          "SG"
-        ]
-      }
-    ]
-  }
-]
+  "entries": [
+    {
+      "hts_code": "8542.31.00",
+      "description": "Electronic integrated circuits: Processors and controllers, whether or not combined with memories, converters, logic circuits, amplifiers, clock and timing circuits, or other circuits",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8542.32.00",
+      "description": "Electronic integrated circuits: Memories",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8542.33.00",
+      "description": "Electronic integrated circuits: Amplifiers",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8542.39.00",
+      "description": "Electronic integrated circuits: Other",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8541.10.00",
+      "description": "Diodes, other than photosensitive or light-emitting diodes (LED)",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8541.41.00",
+      "description": "Light-emitting diodes (LED)",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8541.42.00",
+      "description": "Photovoltaic cells not assembled in modules or made up into panels",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8541.43.00",
+      "description": "Photovoltaic cells assembled in modules or made up into panels",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8541.21.00",
+      "description": "Transistors, other than photosensitive transistors: With a dissipation rate of less than 1 W",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8541.29.00",
+      "description": "Transistors, other than photosensitive transistors: Other",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8541.30.00",
+      "description": "Thyristors, diacs and triacs, other than photosensitive devices",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8541.60.00",
+      "description": "Mounted piezoelectric crystals",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8532.21.00",
+      "description": "Other fixed capacitors: Tantalum",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8532.22.00",
+      "description": "Other fixed capacitors: Aluminum electrolytic",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8532.24.00",
+      "description": "Other fixed capacitors: Ceramic dielectric, multilayer",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8532.25.00",
+      "description": "Other fixed capacitors: Dielectric of paper or plastics",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8533.10.00",
+      "description": "Fixed carbon resistors, composition or film types",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8533.21.00",
+      "description": "Other fixed resistors: For a power handling capacity not exceeding 20 W",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8533.31.00",
+      "description": "Wirewound variable resistors, including rheostats and potentiometers: For a power handling capacity not exceeding 20 W",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8533.40.00",
+      "description": "Other variable resistors, including rheostats and potentiometers",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8504.31.40",
+      "description": "Other transformers: Having a power handling capacity not exceeding 1 kVA: Having a power handling capacity less than 1 kVA",
+      "general_duty_rate_pct": 6.6,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32",
+      "special_rate_programs": [
+        {
+          "rate_pct": 0.0,
+          "programs": [
+            "A",
+            "AU",
+            "B",
+            "BH",
+            "C",
+            "CL",
+            "CO",
+            "D",
+            "E",
+            "IL",
+            "JO",
+            "KR",
+            "MA",
+            "OM",
+            "P",
+            "PA",
+            "PE",
+            "S",
+            "SG"
+          ]
+        }
+      ]
+    },
+    {
+      "hts_code": "8504.50.80",
+      "description": "Other inductors: Other",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8536.50.90",
+      "description": "Other switches: Other",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8536.41.00",
+      "description": "Relays: For a voltage not exceeding 60 V",
+      "general_duty_rate_pct": 2.7,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32",
+      "special_rate_programs": [
+        {
+          "rate_pct": 0.0,
+          "programs": [
+            "A",
+            "AU",
+            "B",
+            "BH",
+            "CL",
+            "CO",
+            "D",
+            "E",
+            "IL",
+            "JO",
+            "KR",
+            "MA",
+            "OM",
+            "P",
+            "PA",
+            "PE",
+            "S",
+            "SG"
+          ]
+        }
+      ]
+    },
+    {
+      "hts_code": "8536.69.80",
+      "description": "Lamp-holders, plugs and sockets: Other: Other",
+      "general_duty_rate_pct": 2.7,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32",
+      "special_rate_programs": [
+        {
+          "rate_pct": 0.0,
+          "programs": [
+            "A*",
+            "AU",
+            "B",
+            "BH",
+            "CL",
+            "CO",
+            "D",
+            "E",
+            "IL",
+            "JO",
+            "KR",
+            "MA",
+            "OM",
+            "P",
+            "PA",
+            "PE",
+            "S",
+            "SG"
+          ]
+        }
+      ]
+    },
+    {
+      "hts_code": "8536.90.85",
+      "description": "Other apparatus: Other",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8534.00.00",
+      "description": "Printed circuits",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8544.42.90",
+      "description": "Other electric conductors, for a voltage not exceeding 1,000 V: Fitted with connectors: Other",
+      "general_duty_rate_pct": 2.6,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32",
+      "special_rate_programs": [
+        {
+          "rate_pct": 0.0,
+          "programs": [
+            "A",
+            "AU",
+            "B",
+            "BH",
+            "CL",
+            "CO",
+            "D",
+            "E",
+            "IL",
+            "JO",
+            "KR",
+            "MA",
+            "OM",
+            "P",
+            "PA",
+            "PE",
+            "S",
+            "SG"
+          ]
+        }
+      ]
+    },
+    {
+      "hts_code": "8506.50.00",
+      "description": "Primary cells and primary batteries: Lithium",
+      "general_duty_rate_pct": 2.7,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32",
+      "special_rate_programs": [
+        {
+          "rate_pct": 0.0,
+          "programs": [
+            "A",
+            "AU",
+            "BH",
+            "CL",
+            "CO",
+            "D",
+            "E",
+            "IL",
+            "JO",
+            "KR",
+            "MA",
+            "OM",
+            "P",
+            "PA",
+            "PE",
+            "S",
+            "SG"
+          ]
+        }
+      ]
+    },
+    {
+      "hts_code": "8507.60.00",
+      "description": "Electric accumulators: Lithium-ion batteries",
+      "general_duty_rate_pct": 3.4,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32",
+      "special_rate_programs": [
+        {
+          "rate_pct": 0.0,
+          "programs": [
+            "A",
+            "AU",
+            "B",
+            "BH",
+            "C",
+            "CL",
+            "CO",
+            "D",
+            "E",
+            "IL",
+            "JO",
+            "KR",
+            "MA",
+            "OM",
+            "P",
+            "PA",
+            "PE",
+            "S",
+            "SG"
+          ]
+        }
+      ]
+    },
+    {
+      "hts_code": "8518.21.00",
+      "description": "Loudspeakers: Single loudspeakers, mounted in their enclosures",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8518.30.20",
+      "description": "Headphones and earphones, whether or not combined with a microphone: Other",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8517.71.00",
+      "description": "Aerials and aerial reflectors of all kinds; parts suitable for use therewith",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "8529.10.91",
+      "description": "Antennas and antenna reflectors of all kinds; parts suitable for use therewith: Other",
+      "general_duty_rate_pct": 0.0,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32"
+    },
+    {
+      "hts_code": "9032.89.60",
+      "description": "Automatic regulating or controlling instruments and apparatus: Other: Other",
+      "general_duty_rate_pct": 1.7,
+      "source": "USITC HTS",
+      "hts_revision": "2025 HTS Revision 32",
+      "special_rate_programs": [
+        {
+          "rate_pct": 0.0,
+          "programs": [
+            "A",
+            "AU",
+            "B",
+            "BH",
+            "C",
+            "CL",
+            "CO",
+            "D",
+            "E",
+            "IL",
+            "JO",
+            "KR",
+            "MA",
+            "OM",
+            "P",
+            "PA",
+            "PE",
+            "S",
+            "SG"
+          ]
+        }
+      ]
+    }
+  ]
+}
