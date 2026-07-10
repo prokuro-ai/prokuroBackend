@@ -58,6 +58,8 @@ pub struct MatchResult {
     pub lifecycle_status: LifecycleStatus,
     pub factory_lead_days: Option<i32>,
     pub top_sellers: Vec<SellerOffer>,
+    #[serde(default)]
+    pub cached: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,8 +181,10 @@ impl NexarClient {
                 map_batch_response(data, batch, batch_index * BATCH_SIZE)
             } else {
                 if let Some(errors) = parsed.errors.as_ref() {
-                    let messages: Vec<&str> =
-                        errors.iter().map(|error| error.message.as_str()).collect();
+                    let messages: Vec<&str> = errors
+                        .iter()
+                        .map(|error| error.message.as_str())
+                        .collect();
                     tracing::warn!(
                         "Nexar returned errors without data for batch {}: {}",
                         batch_index,
@@ -189,7 +193,8 @@ impl NexarClient {
                 }
                 map_no_match_batch(batch, batch_index * BATCH_SIZE)
             };
-            self.enrich_unknown_lifecycle_with_octopart(&token, &mut mapped)
+            self
+                .enrich_unknown_lifecycle_with_octopart(&token, &mut mapped)
                 .await;
             all_results.extend(mapped);
         }
@@ -214,7 +219,13 @@ impl NexarClient {
                 continue;
             }
             let cache_key = mpn.to_uppercase();
-            let cached = { self.octopart_cache.read().await.get(&cache_key).cloned() };
+            let cached = {
+                self.octopart_cache
+                    .read()
+                    .await
+                    .get(&cache_key)
+                    .cloned()
+            };
             let octopart = match cached {
                 Some(value) => value,
                 None => {
@@ -472,6 +483,7 @@ fn map_no_match_batch(inputs: &[MatchInput], global_start_index: usize) -> Vec<M
             lifecycle_status: LifecycleStatus::Unknown,
             factory_lead_days: None,
             top_sellers: Vec::new(),
+            cached: false,
         })
         .collect()
 }
@@ -489,6 +501,7 @@ fn map_one_result(parts: &[SupPart], input: &MatchInput, input_index: usize) -> 
             lifecycle_status: LifecycleStatus::Unknown,
             factory_lead_days: None,
             top_sellers: Vec::new(),
+            cached: false,
         };
     };
 
@@ -512,16 +525,14 @@ fn map_one_result(parts: &[SupPart], input: &MatchInput, input_index: usize) -> 
         input_index,
         nexar_part_id: None,
         matched_mpn: selected_part.mpn.clone(),
-        matched_manufacturer: selected_part
-            .manufacturer
-            .as_ref()
-            .and_then(|m| m.name.clone()),
+        matched_manufacturer: selected_part.manufacturer.as_ref().and_then(|m| m.name.clone()),
         match_status,
         total_avail,
         availability_status,
         lifecycle_status,
         factory_lead_days,
         top_sellers,
+        cached: false,
     }
 }
 
@@ -575,10 +586,7 @@ fn map_top_sellers(part: &SupPart) -> Vec<SellerOffer> {
                 .filter_map(|offer| offer.inventory_level)
                 .max()
                 .unwrap_or(0);
-            Some(SellerOffer {
-                name,
-                inventory_level,
-            })
+            Some(SellerOffer { name, inventory_level })
         })
         .collect();
 
@@ -588,7 +596,8 @@ fn map_top_sellers(part: &SupPart) -> Vec<SellerOffer> {
 }
 
 fn min_factory_lead_days(part: &SupPart) -> Option<i32> {
-    part.sellers
+    part
+        .sellers
         .as_deref()
         .unwrap_or(&[])
         .iter()
@@ -622,8 +631,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        map_batch_response, map_no_match_batch, map_octopart_lifecycle_status, AvailabilityStatus,
-        LifecycleStatus, MatchInput, MatchStatus, SupMultiMatchResponse,
+        AvailabilityStatus, LifecycleStatus, MatchInput, MatchStatus, SupMultiMatchResponse,
+        map_batch_response, map_no_match_batch, map_octopart_lifecycle_status,
     };
 
     const MULTIMATCH_HIT_FIXTURE: &str = r#"{
@@ -681,11 +690,7 @@ mod tests {
             manufacturer: Some("Murata".to_string()),
         }];
 
-        let result = map_batch_response(
-            response.data.expect("fixture should include data"),
-            &inputs,
-            0,
-        );
+        let result = map_batch_response(response.data.expect("fixture should include data"), &inputs, 0);
 
         assert_eq!(result[0].availability_status, AvailabilityStatus::InStock);
         assert_eq!(result[0].match_status, MatchStatus::Exact);
@@ -703,11 +708,7 @@ mod tests {
             manufacturer: Some("Unknown".to_string()),
         }];
 
-        let result = map_batch_response(
-            response.data.expect("fixture should include data"),
-            &inputs,
-            0,
-        );
+        let result = map_batch_response(response.data.expect("fixture should include data"), &inputs, 0);
 
         assert_eq!(result[0].availability_status, AvailabilityStatus::NoMatch);
         assert_eq!(result[0].match_status, MatchStatus::None);
@@ -749,11 +750,7 @@ mod tests {
             manufacturer: Some("Murata".to_string()),
         }];
 
-        let result = map_batch_response(
-            response.data.expect("fixture should include data"),
-            &inputs,
-            0,
-        );
+        let result = map_batch_response(response.data.expect("fixture should include data"), &inputs, 0);
 
         assert_eq!(result[0].lifecycle_status, LifecycleStatus::Unknown);
     }
@@ -788,11 +785,7 @@ mod tests {
             manufacturer: Some("Murata".to_string()),
         }];
 
-        let result = map_batch_response(
-            response.data.expect("fixture should include data"),
-            &inputs,
-            0,
-        );
+        let result = map_batch_response(response.data.expect("fixture should include data"), &inputs, 0);
 
         assert_eq!(result[0].factory_lead_days, Some(14));
     }
@@ -823,11 +816,7 @@ mod tests {
             manufacturer: Some("Murata".to_string()),
         }];
 
-        let result = map_batch_response(
-            response.data.expect("fixture should include data"),
-            &inputs,
-            0,
-        );
+        let result = map_batch_response(response.data.expect("fixture should include data"), &inputs, 0);
 
         assert_eq!(result[0].top_sellers.len(), 3);
         assert_eq!(result[0].top_sellers[0].name, "S2");

@@ -20,6 +20,8 @@ thiserror = "*"
 tracing = "*"
 tracing-subscriber = "*"
 tower-http = { version = "*", features = ["trace"] }
+sqlx = { version = "*", features = ["runtime-tokio", "postgres", "chrono", "json"] }
+chrono = "*"
 
 [dev-dependencies]
 tower = "*"

@@ -4,6 +4,8 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
+use prokuro_enrichment::AppState;
+
 fn env_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -15,7 +17,7 @@ fn env_lock() -> &'static Mutex<()> {
 #[tokio::test]
 #[ignore]
 async fn enrich_handler_returns_200_with_mock_data() {
-    let app = prokuro_enrichment::app();
+    let app = prokuro_enrichment::app(AppState::default());
     let request = Request::builder()
         .method("POST")
         .uri("/v1/enrich")
@@ -25,10 +27,7 @@ async fn enrich_handler_returns_200_with_mock_data() {
         ))
         .expect("request should build");
 
-    let response = app
-        .oneshot(request)
-        .await
-        .expect("request should be handled");
+    let response = app.oneshot(request).await.expect("request should be handled");
 
     assert_eq!(response.status(), StatusCode::OK);
 }
@@ -41,7 +40,7 @@ async fn enrich_handler_returns_503_when_no_credentials() {
         std::env::remove_var("NEXAR_CLIENT_SECRET");
     }
 
-    let app = prokuro_enrichment::app();
+    let app = prokuro_enrichment::app(AppState::default());
     let request = Request::builder()
         .method("POST")
         .uri("/v1/enrich")
@@ -51,10 +50,7 @@ async fn enrich_handler_returns_503_when_no_credentials() {
         ))
         .expect("request should build");
 
-    let response = app
-        .oneshot(request)
-        .await
-        .expect("request should be handled");
+    let response = app.oneshot(request).await.expect("request should be handled");
 
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
