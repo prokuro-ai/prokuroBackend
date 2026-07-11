@@ -56,7 +56,7 @@ pub struct CreateBomInput {
 impl BomStore {
     pub async fn from_env() -> Self {
         if let Ok(bucket) = std::env::var("BOM_BUCKET_NAME") {
-            let config = aws_config::load_from_env().await;
+            let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
             let client = S3Client::new(&config);
             return Self {
                 mode: StoreMode::S3 { client, bucket },
@@ -349,9 +349,14 @@ mod tests {
                 out_of_stock: 1,
                 eol_or_nrnd: 1,
                 no_match: 0,
+                error_count: 0,
                 long_lead: 0,
+                red_count: 1,
+                yellow_count: 1,
+                green_count: 2,
             },
             lines: Vec::new(),
+            top_risks: Vec::new(),
             warnings: Vec::new(),
             stats: serde_json::json!({}),
             analyzed_at: "0Z".to_string(),

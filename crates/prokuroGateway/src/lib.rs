@@ -8,10 +8,11 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::json;
 
-use analyze::{merge, AnalyzeResult};
+use analyze::{apply_tariff_results, finalize_analyze, merge, AnalyzeResult};
 use boms::handlers::{create_bom, delete_bom, get_bom, list_boms};
 use clients::enrichment::{EnrichInput, EnrichmentClient};
 use clients::parser::ParserClient;
+use clients::tariff::{TariffClient, TariffInput};
 use state::AppState;
 
 pub mod analyze;
@@ -30,6 +31,10 @@ pub enum GatewayError {
     EnrichmentError(String),
     #[error("enrichment timed out")]
     EnrichmentTimeout,
+    #[error("tariff error: {0}")]
+    TariffError(String),
+    #[error("tariff timed out")]
+    TariffTimeout,
 }
 
 pub fn app(state: AppState) -> Router {
@@ -166,20 +171,59 @@ async fn analyze_handler(multipart: Multipart) -> impl IntoResponse {
         .collect();
 
     let enrich_client = EnrichmentClient::from_env();
-    let enrich = match enrich_client.enrich(&enrich_inputs).await {
-        Ok(result) => result,
+    let (enrich, enrichment_warning) = match enrich_client.enrich(&enrich_inputs).await {
+        Ok(result) => (result, None),
         Err(error) => {
-            let mut partial: AnalyzeResult = merge(parse, Vec::new());
-            partial.warnings.push(json!({
-                "code": "ENRICHMENT_FAILED",
-                "message": error.to_string()
-            }));
-            return Json(partial).into_response();
+            tracing::warn!(%error, "enrichment unavailable; continuing with parse-only lines");
+            (
+                Vec::new(),
+                Some(json!({
+                    "code": "ENRICHMENT_FAILED",
+                    "message": error.to_string()
+                })),
+            )
         }
     };
 
-    let merged = merge(parse, enrich);
+    let mut merged = merge(parse, enrich);
+    if let Some(warning) = enrichment_warning {
+        merged.warnings.push(warning);
+    }
+
+    apply_tariff_overlay(&mut merged).await;
+
     Json(merged).into_response()
+}
+
+async fn apply_tariff_overlay(merged: &mut AnalyzeResult) {
+    let Some(tariff_client) = TariffClient::from_env() else {
+        return;
+    };
+
+    let tariff_inputs: Vec<TariffInput> = merged
+        .lines
+        .iter()
+        .map(|line| TariffInput {
+            mpn: line.mpn.clone().unwrap_or_default(),
+            description: line.description.clone(),
+            category: None,
+            country_of_origin: None,
+        })
+        .collect();
+
+    match tariff_client.classify(&tariff_inputs).await {
+        Ok(tariff_results) => {
+            apply_tariff_results(&mut merged.lines, tariff_results);
+            finalize_analyze(merged);
+        }
+        Err(error) => {
+            tracing::warn!(%error, "tariff service unavailable; continuing without tariff fields");
+            merged.warnings.push(json!({
+                "code": "TARIFF_UNAVAILABLE",
+                "message": error.to_string()
+            }));
+        }
+    }
 }
 
 pub async fn build_app_state() -> Arc<AppState> {

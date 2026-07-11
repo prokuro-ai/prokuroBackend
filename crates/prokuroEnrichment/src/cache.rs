@@ -67,6 +67,7 @@ fn empty_result(input_index: usize) -> MatchResult {
         factory_lead_days: None,
         top_sellers: Vec::new(),
         cached: false,
+        error_detail: None,
     }
 }
 
@@ -103,6 +104,10 @@ pub async fn get_cached(
     let mut out = HashMap::new();
     for row in rows {
         let mut result = row.result.0;
+        // Never serve transient provider failures from cache (defensive).
+        if !is_cacheable(&result) {
+            continue;
+        }
         result.cached = true;
         out.insert((row.mpn, row.manufacturer), result);
     }
@@ -113,19 +118,24 @@ pub async fn put_cached(
     pool: &PgPool,
     results: &[(MatchInput, MatchResult)],
 ) -> Result<(), sqlx::Error> {
-    if results.is_empty() {
+    let cacheable: Vec<&(MatchInput, MatchResult)> = results
+        .iter()
+        .filter(|(_, result)| is_cacheable(result))
+        .collect();
+    if cacheable.is_empty() {
         return Ok(());
     }
 
-    let mut mpns = Vec::with_capacity(results.len());
-    let mut manufacturers = Vec::with_capacity(results.len());
-    let mut payloads = Vec::with_capacity(results.len());
+    let mut mpns = Vec::with_capacity(cacheable.len());
+    let mut manufacturers = Vec::with_capacity(cacheable.len());
+    let mut payloads = Vec::with_capacity(cacheable.len());
 
-    for (input, result) in results {
+    for (input, result) in cacheable {
         let (mpn, manufacturer) = cache_key(input);
         let mut stored = result.clone();
         stored.input_index = 0;
         stored.cached = false;
+        stored.error_detail = None;
         mpns.push(mpn);
         manufacturers.push(manufacturer);
         payloads.push(sqlx::types::Json(stored));
@@ -147,6 +157,11 @@ pub async fn put_cached(
     .await?;
 
     Ok(())
+}
+
+/// Provider Error results must never be persisted — they are transient failures.
+pub fn is_cacheable(result: &MatchResult) -> bool {
+    result.availability_status != crate::nexar::client::AvailabilityStatus::Error
 }
 
 #[derive(sqlx::FromRow)]
@@ -178,7 +193,63 @@ mod tests {
             factory_lead_days: None,
             top_sellers: Vec::new(),
             cached: false,
+            error_detail: None,
         }
+    }
+
+    #[test]
+    fn error_results_are_not_cacheable() {
+        let error = MatchResult {
+            input_index: 0,
+            nexar_part_id: None,
+            matched_mpn: None,
+            matched_manufacturer: None,
+            match_status: MatchStatus::None,
+            total_avail: 0,
+            availability_status: AvailabilityStatus::Error,
+            lifecycle_status: LifecycleStatus::Unknown,
+            factory_lead_days: None,
+            top_sellers: Vec::new(),
+            cached: false,
+            error_detail: Some("provider quota exceeded".into()),
+        };
+        let nomatch = MatchResult {
+            availability_status: AvailabilityStatus::NoMatch,
+            error_detail: None,
+            ..error.clone()
+        };
+        assert!(!super::is_cacheable(&error));
+        assert!(super::is_cacheable(&nomatch));
+        assert!(super::is_cacheable(&sample_result("ok")));
+    }
+
+    #[test]
+    fn put_cached_skips_error_results_without_writing() {
+        // Filter contract used by put_cached: Error rows are dropped before INSERT.
+        let input = MatchInput {
+            mpn: "X".into(),
+            manufacturer: None,
+        };
+        let error = MatchResult {
+            input_index: 0,
+            nexar_part_id: None,
+            matched_mpn: None,
+            matched_manufacturer: None,
+            match_status: MatchStatus::None,
+            total_avail: 0,
+            availability_status: AvailabilityStatus::Error,
+            lifecycle_status: LifecycleStatus::Unknown,
+            factory_lead_days: None,
+            top_sellers: Vec::new(),
+            cached: false,
+            error_detail: Some("provider quota exceeded".into()),
+        };
+        let pairs = [(input, error)];
+        let cacheable: Vec<_> = pairs
+            .iter()
+            .filter(|(_, result)| super::is_cacheable(result))
+            .collect();
+        assert!(cacheable.is_empty());
     }
 
     #[test]

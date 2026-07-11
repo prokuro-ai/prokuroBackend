@@ -33,6 +33,15 @@ services:
     depends_on:
       - postgres
 
+  tariff:
+    build:
+      context: .
+      dockerfile: docker/tariff.Dockerfile
+    ports:
+      - "3003:3003"
+    environment:
+      - PORT=3003
+
   gateway:
     build:
       context: .
@@ -43,6 +52,7 @@ services:
       - PORT=3000
       - PARSER_URL=http://parser:3001
       - ENRICHMENT_URL=http://enrichment:3002
+      - TARIFF_URL=${TARIFF_URL:-http://tariff:3003}
       - BOM_STORAGE_PATH=/data/boms
       - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
       - COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID:-}
@@ -53,6 +63,7 @@ services:
     depends_on:
       - parser
       - enrichment
+      - tariff
 
 volumes:
   bom-data:

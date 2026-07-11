@@ -110,6 +110,42 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /v1/tariff:
+    post:
+      summary: Estimate HTS classification and tariff exposure for BOM lines
+      description: |
+        Served by prokuro-tariff (not the gateway process). Returns estimated
+        duty exposure only — `estimated` is always true. Never invents a duty
+        rate; unclassified lines return null HTS/duty fields with a manual-review note.
+        Section 301 applies only when country_of_origin normalizes to China and the
+        HTS prefix is on a USTR list. Missing origin on a 301-covered HTS leaves
+        section_301_pct null and adds a conditional exposure warning in notes.
+      operationId: estimateTariff
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/TariffInput"
+      responses:
+        "200":
+          description: Per-line estimated tariff exposure (same order as input)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TariffLineResult"
+        "400":
+          description: Empty or invalid body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     ErrorResponse:
@@ -246,7 +282,17 @@ components:
 
     AnalyzeSummary:
       type: object
-      required: [total, in_stock, out_of_stock, eol_or_nrnd, no_match, long_lead]
+      required:
+        - total
+        - in_stock
+        - out_of_stock
+        - eol_or_nrnd
+        - no_match
+        - error_count
+        - long_lead
+        - red_count
+        - yellow_count
+        - green_count
       properties:
         total:
           type: integer
@@ -258,7 +304,17 @@ components:
           type: integer
         no_match:
           type: integer
+          description: Genuine catalog misses (availability_status NoMatch only)
+        error_count:
+          type: integer
+          description: Provider lookup failures (availability_status Error); never overlaps no_match
         long_lead:
+          type: integer
+        red_count:
+          type: integer
+        yellow_count:
+          type: integer
+        green_count:
           type: integer
 
     AnalyzedLine:
@@ -271,6 +327,7 @@ components:
         - match_status
         - total_avail
         - top_sellers
+        - risk_level
       properties:
         row_index:
           type: integer
@@ -309,6 +366,122 @@ components:
           items:
             type: object
             additionalProperties: true
+        risk_level:
+          type: string
+          enum: [red, yellow, green]
+        hts_code:
+          type: string
+          nullable: true
+          description: Estimated HTS code from prokuro-tariff (omitted when TARIFF_URL unset)
+        tariff_confidence:
+          type: string
+          nullable: true
+          enum: [high, medium, low, unclassified]
+        base_duty_pct:
+          type: number
+          nullable: true
+          description: Column 1 General duty percent from curated USITC extract
+        section_301_pct:
+          type: number
+          nullable: true
+          description: Additional Section 301 percent when China origin is known
+        total_duty_pct:
+          type: number
+          nullable: true
+        tariff_notes:
+          type: string
+          nullable: true
+        rate_basis:
+          type: string
+          nullable: true
+          description: Which Column 1 rate was applied (omitted when TARIFF_URL unset)
+        is_stale:
+          type: boolean
+          nullable: true
+          description: True when curated tariff data is past its next_review_due
+        tariff_disclaimer:
+          type: string
+          nullable: true
+          description: Planning-only disclaimer from the tariff service
+
+    TariffInput:
+      type: object
+      required: [mpn]
+      properties:
+        mpn:
+          type: string
+        description:
+          type: string
+          nullable: true
+        category:
+          type: string
+          nullable: true
+        country_of_origin:
+          type: string
+          nullable: true
+
+    TariffLineResult:
+      type: object
+      required:
+        - mpn
+        - confidence
+        - estimated
+        - rate_basis
+        - data_sources
+        - disclaimer
+      properties:
+        mpn:
+          type: string
+        hts_code:
+          type: string
+          nullable: true
+        classification:
+          type: string
+          nullable: true
+        confidence:
+          type: string
+          enum: [high, medium, low, unclassified]
+        base_duty_pct:
+          type: number
+          nullable: true
+        section_301_pct:
+          type: number
+          nullable: true
+        total_duty_pct:
+          type: number
+          nullable: true
+        rate_basis:
+          type: string
+          description: |
+            Which Column 1 rate was applied: `general`, `special:<program_code>`
+            (e.g. `special:S` for USMCA), or `unknown_origin` when unclassified.
+        estimated:
+          type: boolean
+          description: Always true in v1 — UI must label as estimated tariff exposure
+        notes:
+          type: string
+          nullable: true
+        data_sources:
+          type: object
+          required:
+            - hts_revision
+            - section_301_retrieved
+            - hts_data_age_days
+            - section_301_data_age_days
+            - is_stale
+          properties:
+            hts_revision:
+              type: string
+            section_301_retrieved:
+              type: string
+            hts_data_age_days:
+              type: integer
+            section_301_data_age_days:
+              type: integer
+            is_stale:
+              type: boolean
+        disclaimer:
+          type: string
 
     AnalyzeResult:
       type: object
@@ -318,6 +491,7 @@ components:
         - mapping_confidence
         - summary
         - lines
+        - top_risks
         - warnings
         - stats
         - analyzed_at
@@ -337,6 +511,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AnalyzedLine"
+        top_risks:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalyzedLine"
+          description: Up to five highest-risk lines (Red then Yellow); never padded with Green
         warnings:
           type: array
           items:

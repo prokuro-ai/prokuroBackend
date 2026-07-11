@@ -1,0 +1,120 @@
+// Source: USTR Section 301 actions on China
+// Official portal: https://ustr.gov/issue-areas/enforcement/section-301-investigations
+// List notices (historical): List 1 83 FR 28710; List 2 83 FR 40823; List 3 83 FR 47974; List 4A 84 FR 43304 / Phase One reduction to 7.5%
+// Four-year review modifications: 89 FR 76581 (Sept 2024) — semiconductors (8541/8542) raised to 50% effective 2025-01-01;
+//   non-EV lithium-ion batteries (8507.60) raised to 25% effective 2026-01-01.
+// Retrieval date: 2026-07-10
+//
+// WARNING: These lists and rates change. Re-check USTR announcements and Chapter 99
+// (9903.88.xx) footnotes in the current HTS before relying on this file for compliance.
+// This file is a curated electronics extract for estimation only — not a substitute for
+// a licensed customs broker or the live USTR/HTS lookup.
+
+{
+  "meta": {
+    "retrieved_at": "2026-07-10",
+    "source_url": "https://ustr.gov/issue-areas/enforcement/section-301-investigations",
+    "reviewed_by": "human",
+    "next_review_due": "2026-08-09"
+  },
+  "entries": [
+    {
+      "hts_prefix": "8542",
+      "additional_rate_pct": 50.0,
+      "list": "List 2 (modified \u2014 semiconductors, effective 2025-01-01)",
+      "source": "USTR",
+      "retrieved": "2026-07-10"
+    },
+    {
+      "hts_prefix": "8541",
+      "additional_rate_pct": 50.0,
+      "list": "List 2 (modified \u2014 semiconductors, effective 2025-01-01)",
+      "source": "USTR",
+      "retrieved": "2026-07-10"
+    },
+    {
+      "hts_prefix": "8532",
+      "additional_rate_pct": 25.0,
+      "list": "List 1",
+      "source": "USTR",
+      "retrieved": "2026-07-10"
+    },
+    {
+      "hts_prefix": "8533",
+      "additional_rate_pct": 25.0,
+      "list": "List 3",
+      "source": "USTR",
+      "retrieved": "2026-07-10"
+    },
+    {
+      "hts_prefix": "8504",
+      "additional_rate_pct": 25.0,
+      "list": "List 3",
+      "source": "USTR",
+      "retrieved": "2026-07-10"
+    },
+    {
+      "hts_prefix": "8536",
+      "additional_rate_pct": 25.0,
+      "list": "List 3",
+      "source": "USTR",
+      "retrieved": "2026-07-10"
+    },
+    {
+      "hts_prefix": "8534",
+      "additional_rate_pct": 25.0,
+      "list": "List 3",
+      "source": "USTR",
+      "retrieved": "2026-07-10"
+    },
+    {
+      "hts_prefix": "8544",
+      "additional_rate_pct": 25.0,
+      "list": "List 3",
+      "source": "USTR",
+      "retrieved": "2026-07-10"
+    },
+    {
+      "hts_prefix": "8506",
+      "additional_rate_pct": 25.0,
+      "list": "List 3",
+      "source": "USTR",
+      "retrieved": "2026-07-10"
+    },
+    {
+      "hts_prefix": "8507.60",
+      "additional_rate_pct": 25.0,
+      "list": "List 4A (modified \u2014 lithium-ion batteries, effective 2026-01-01)",
+      "source": "USTR",
+      "retrieved": "2026-07-10"
+    },
+    {
+      "hts_prefix": "8518",
+      "additional_rate_pct": 7.5,
+      "list": "List 4A",
+      "source": "USTR",
+      "retrieved": "2026-07-10"
+    },
+    {
+      "hts_prefix": "8517.71",
+      "additional_rate_pct": 7.5,
+      "list": "List 4A",
+      "source": "USTR",
+      "retrieved": "2026-07-10"
+    },
+    {
+      "hts_prefix": "8529",
+      "additional_rate_pct": 7.5,
+      "list": "List 4A",
+      "source": "USTR",
+      "retrieved": "2026-07-10"
+    },
+    {
+      "hts_prefix": "9032",
+      "additional_rate_pct": 25.0,
+      "list": "List 1",
+      "source": "USTR",
+      "retrieved": "2026-07-10"
+    }
+  ]
+}
