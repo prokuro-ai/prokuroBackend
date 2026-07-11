@@ -282,7 +282,17 @@ components:
 
     AnalyzeSummary:
       type: object
-      required: [total, in_stock, out_of_stock, eol_or_nrnd, no_match, long_lead]
+      required:
+        - total
+        - in_stock
+        - out_of_stock
+        - eol_or_nrnd
+        - no_match
+        - error_count
+        - long_lead
+        - red_count
+        - yellow_count
+        - green_count
       properties:
         total:
           type: integer
@@ -294,7 +304,17 @@ components:
           type: integer
         no_match:
           type: integer
+          description: Genuine catalog misses (availability_status NoMatch only)
+        error_count:
+          type: integer
+          description: Provider lookup failures (availability_status Error); never overlaps no_match
         long_lead:
+          type: integer
+        red_count:
+          type: integer
+        yellow_count:
+          type: integer
+        green_count:
           type: integer
 
     AnalyzedLine:
@@ -307,6 +327,7 @@ components:
         - match_status
         - total_avail
         - top_sellers
+        - risk_level
       properties:
         row_index:
           type: integer
@@ -345,6 +366,9 @@ components:
           items:
             type: object
             additionalProperties: true
+        risk_level:
+          type: string
+          enum: [red, yellow, green]
         hts_code:
           type: string
           nullable: true
@@ -367,6 +391,18 @@ components:
         tariff_notes:
           type: string
           nullable: true
+        rate_basis:
+          type: string
+          nullable: true
+          description: Which Column 1 rate was applied (omitted when TARIFF_URL unset)
+        is_stale:
+          type: boolean
+          nullable: true
+          description: True when curated tariff data is past its next_review_due
+        tariff_disclaimer:
+          type: string
+          nullable: true
+          description: Planning-only disclaimer from the tariff service
 
     TariffInput:
       type: object
@@ -392,6 +428,7 @@ components:
         - estimated
         - rate_basis
         - data_sources
+        - disclaimer
       properties:
         mpn:
           type: string
@@ -426,12 +463,25 @@ components:
           nullable: true
         data_sources:
           type: object
-          required: [hts_revision, section_301_retrieved]
+          required:
+            - hts_revision
+            - section_301_retrieved
+            - hts_data_age_days
+            - section_301_data_age_days
+            - is_stale
           properties:
             hts_revision:
               type: string
             section_301_retrieved:
               type: string
+            hts_data_age_days:
+              type: integer
+            section_301_data_age_days:
+              type: integer
+            is_stale:
+              type: boolean
+        disclaimer:
+          type: string
 
     AnalyzeResult:
       type: object
@@ -441,6 +491,7 @@ components:
         - mapping_confidence
         - summary
         - lines
+        - top_risks
         - warnings
         - stats
         - analyzed_at
@@ -460,6 +511,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AnalyzedLine"
+        top_risks:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalyzedLine"
+          description: Up to five highest-risk lines (Red then Yellow); never padded with Green
         warnings:
           type: array
           items:

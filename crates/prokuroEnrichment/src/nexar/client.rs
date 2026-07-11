@@ -60,6 +60,9 @@ pub struct MatchResult {
     pub top_sellers: Vec<SellerOffer>,
     #[serde(default)]
     pub cached: bool,
+    /// Short human-readable provider failure reason. Set only for [`AvailabilityStatus::Error`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,15 +127,11 @@ impl NexarClient {
     pub async fn multi_match(&self, lines: &[MatchInput]) -> Result<Vec<MatchResult>, ClientError> {
         let mut all_results = Vec::with_capacity(lines.len());
 
-        for (batch_index, batch) in lines.chunks(BATCH_SIZE).enumerate() {
+        'batches: for (batch_index, batch) in lines.chunks(BATCH_SIZE).enumerate() {
             let token = self.auth.get_token().await?;
             let mut attempts = 0usize;
             let response = loop {
                 let body = build_graphql_request(batch);
-                // Debug-only: keep disabled in prod to avoid noisy/sensitive payload logs.
-                // let request_body = serde_json::to_string(&body)
-                //     .unwrap_or_else(|_| "<invalid-request-body>".to_string());
-                // tracing::error!("Nexar GraphQL request body={}", request_body);
                 let send_result = self
                     .http
                     .post(NEXAR_GRAPHQL_URL)
@@ -144,8 +143,24 @@ impl NexarClient {
 
                 let response = match send_result {
                     Ok(response) => response,
-                    Err(error) if error.is_timeout() => return Err(ClientError::Timeout),
-                    Err(error) => return Err(ClientError::Request(error.to_string())),
+                    Err(error) if error.is_timeout() => {
+                        tracing::warn!(batch = batch_index, "Nexar request timed out");
+                        all_results.extend(map_error_batch(
+                            batch,
+                            batch_index * BATCH_SIZE,
+                            "provider timeout",
+                        ));
+                        continue 'batches;
+                    }
+                    Err(error) => {
+                        tracing::warn!(batch = batch_index, %error, "Nexar request failed");
+                        all_results.extend(map_error_batch(
+                            batch,
+                            batch_index * BATCH_SIZE,
+                            "provider error",
+                        ));
+                        continue 'batches;
+                    }
                 };
 
                 if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && attempts == 0 {
@@ -158,28 +173,48 @@ impl NexarClient {
             };
 
             let status = response.status();
-            let body = response
-                .text()
-                .await
-                .map_err(|error| ClientError::Request(error.to_string()))?;
-            // Debug-only: keep disabled in prod to avoid noisy/sensitive payload logs.
-            // tracing::error!("Nexar GraphQL response status={} body={}", status, body);
+            let body = match response.text().await {
+                Ok(body) => body,
+                Err(error) => {
+                    tracing::warn!(batch = batch_index, %error, "failed to read Nexar response body");
+                    all_results.extend(map_error_batch(
+                        batch,
+                        batch_index * BATCH_SIZE,
+                        "provider error",
+                    ));
+                    continue;
+                }
+            };
             if !status.is_success() {
-                return Err(ClientError::Request(format!(
-                    "status {} body {}",
-                    status.as_u16(),
-                    body
-                )));
+                tracing::warn!(
+                    batch = batch_index,
+                    status = status.as_u16(),
+                    "Nexar returned non-success HTTP status"
+                );
+                let detail = if status.as_u16() == 429 {
+                    "provider quota exceeded"
+                } else {
+                    "provider error"
+                };
+                all_results.extend(map_error_batch(batch, batch_index * BATCH_SIZE, detail));
+                continue;
             }
-            let parsed: SupMultiMatchResponse = serde_json::from_str(&body).map_err(|error| {
-                ClientError::Request(format!(
-                    "failed to parse GraphQL response as json: {} body: {}",
-                    error, body
-                ))
-            })?;
+            let parsed: SupMultiMatchResponse = match serde_json::from_str(&body) {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    tracing::warn!(batch = batch_index, %error, "failed to parse Nexar GraphQL JSON");
+                    all_results.extend(map_error_batch(
+                        batch,
+                        batch_index * BATCH_SIZE,
+                        "provider error",
+                    ));
+                    continue;
+                }
+            };
             let mut mapped = if let Some(data) = parsed.data {
                 map_batch_response(data, batch, batch_index * BATCH_SIZE)
             } else {
+                let detail = provider_error_detail(parsed.errors.as_ref());
                 if let Some(errors) = parsed.errors.as_ref() {
                     let messages: Vec<&str> = errors
                         .iter()
@@ -191,7 +226,7 @@ impl NexarClient {
                         messages.join(" | ")
                     );
                 }
-                map_no_match_batch(batch, batch_index * BATCH_SIZE)
+                map_error_batch(batch, batch_index * BATCH_SIZE, &detail)
             };
             self
                 .enrich_unknown_lifecycle_with_octopart(&token, &mut mapped)
@@ -468,7 +503,11 @@ fn map_batch_response(
         .collect()
 }
 
-fn map_no_match_batch(inputs: &[MatchInput], global_start_index: usize) -> Vec<MatchResult> {
+fn map_error_batch(
+    inputs: &[MatchInput],
+    global_start_index: usize,
+    detail: &str,
+) -> Vec<MatchResult> {
     inputs
         .iter()
         .enumerate()
@@ -479,13 +518,41 @@ fn map_no_match_batch(inputs: &[MatchInput], global_start_index: usize) -> Vec<M
             matched_manufacturer: None,
             match_status: MatchStatus::None,
             total_avail: 0,
-            availability_status: AvailabilityStatus::NoMatch,
+            availability_status: AvailabilityStatus::Error,
             lifecycle_status: LifecycleStatus::Unknown,
             factory_lead_days: None,
             top_sellers: Vec::new(),
             cached: false,
+            error_detail: Some(detail.to_string()),
         })
         .collect()
+}
+
+fn provider_error_detail(errors: Option<&Vec<GraphQlError>>) -> String {
+    let joined = errors
+        .map(|list| {
+            list.iter()
+                .map(|error| error.message.to_ascii_lowercase())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default();
+    if joined.contains("exceeded")
+        || joined.contains("part limit")
+        || joined.contains("quota")
+        || joined.contains("rate limit")
+    {
+        "provider quota exceeded".to_string()
+    } else if joined.contains("timeout") {
+        "provider timeout".to_string()
+    } else if joined.contains("unauthorized")
+        || joined.contains("unauthenticated")
+        || joined.contains("authentication")
+    {
+        "provider authentication failed".to_string()
+    } else {
+        "provider error".to_string()
+    }
 }
 
 fn map_one_result(parts: &[SupPart], input: &MatchInput, input_index: usize) -> MatchResult {
@@ -502,6 +569,7 @@ fn map_one_result(parts: &[SupPart], input: &MatchInput, input_index: usize) -> 
             factory_lead_days: None,
             top_sellers: Vec::new(),
             cached: false,
+            error_detail: None,
         };
     };
 
@@ -533,6 +601,7 @@ fn map_one_result(parts: &[SupPart], input: &MatchInput, input_index: usize) -> 
         factory_lead_days,
         top_sellers,
         cached: false,
+        error_detail: None,
     }
 }
 
@@ -632,7 +701,7 @@ mod tests {
 
     use super::{
         AvailabilityStatus, LifecycleStatus, MatchInput, MatchStatus, SupMultiMatchResponse,
-        map_batch_response, map_no_match_batch, map_octopart_lifecycle_status,
+        map_batch_response, map_error_batch, map_octopart_lifecycle_status, provider_error_detail,
     };
 
     const MULTIMATCH_HIT_FIXTURE: &str = r#"{
@@ -715,7 +784,7 @@ mod tests {
     }
 
     #[test]
-    fn graphql_errors_without_data_map_to_no_match_batch() {
+    fn graphql_errors_without_data_map_to_error_batch() {
         let response: SupMultiMatchResponse =
             serde_json::from_str(MULTIMATCH_ERROR_FIXTURE).expect("fixture should deserialize");
         assert!(response.data.is_none());
@@ -732,12 +801,34 @@ mod tests {
             },
         ];
 
-        let result = map_no_match_batch(&inputs, 0);
+        let detail = provider_error_detail(response.errors.as_ref());
+        assert_eq!(detail, "provider quota exceeded");
+        let result = map_error_batch(&inputs, 0, &detail);
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0].availability_status, AvailabilityStatus::NoMatch);
+        assert_eq!(result[0].availability_status, AvailabilityStatus::Error);
         assert_eq!(result[0].match_status, MatchStatus::None);
-        assert_eq!(result[1].availability_status, AvailabilityStatus::NoMatch);
-        assert_eq!(result[1].match_status, MatchStatus::None);
+        assert_eq!(
+            result[0].error_detail.as_deref(),
+            Some("provider quota exceeded")
+        );
+        assert_eq!(result[1].availability_status, AvailabilityStatus::Error);
+        assert_eq!(
+            result[1].error_detail.as_deref(),
+            Some("provider quota exceeded")
+        );
+    }
+
+    #[test]
+    fn genuine_empty_parts_still_maps_to_no_match_not_error() {
+        let response: SupMultiMatchResponse =
+            serde_json::from_str(MULTIMATCH_MISS_FIXTURE).expect("fixture should deserialize");
+        let inputs = vec![MatchInput {
+            mpn: "DOES-NOT-EXIST".to_string(),
+            manufacturer: Some("Unknown".to_string()),
+        }];
+        let result = map_batch_response(response.data.expect("data"), &inputs, 0);
+        assert_eq!(result[0].availability_status, AvailabilityStatus::NoMatch);
+        assert_eq!(result[0].error_detail, None);
     }
 
     #[test]

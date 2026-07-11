@@ -74,6 +74,18 @@ pub struct TariffInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TariffDataSources {
+    pub hts_revision: String,
+    pub section_301_retrieved: String,
+    #[serde(default)]
+    pub hts_data_age_days: i64,
+    #[serde(default)]
+    pub section_301_data_age_days: i64,
+    #[serde(default)]
+    pub is_stale: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TariffResult {
     pub mpn: String,
     pub hts_code: Option<String>,
@@ -82,6 +94,9 @@ pub struct TariffResult {
     pub base_duty_pct: Option<f64>,
     pub section_301_pct: Option<f64>,
     pub total_duty_pct: Option<f64>,
+    pub rate_basis: String,
     pub estimated: bool,
     pub notes: Option<String>,
+    pub data_sources: TariffDataSources,
+    pub disclaimer: String,
 }
