@@ -206,8 +206,8 @@ async fn apply_tariff_overlay(merged: &mut AnalyzeResult) {
         .map(|line| TariffInput {
             mpn: line.mpn.clone().unwrap_or_default(),
             description: line.description.clone(),
-            category: None,
-            country_of_origin: None,
+            category: line.category.clone(),
+            country_of_origin: line.country_of_origin.clone(),
         })
         .collect();
 

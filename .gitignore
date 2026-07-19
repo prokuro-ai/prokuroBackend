@@ -12,8 +12,7 @@ awesome-design-md-main/
 # Corpus large files (use Git LFS for committed xlsx)
 # corpus/raw/*.xlsx
 .env
-crates/prokuroEnrichment/src/nexar/fixtures/
-crates/prokuroEnrichment/tests/fixtures/nexar/
+crates/prokuroEnrichment/tests/fixtures/
 corpus/reports/
 
 # data scraping for BOMs

@@ -1,24 +1,51 @@
-use axum::extract::{Multipart, Path, State};
+use axum::extract::{Multipart, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
+use serde::Deserialize;
 use serde_json::json;
+
+use prokuro_types::pagination::{page_by_id, PageError, PageParams};
 
 use crate::analyze::AnalyzeResult;
 use crate::auth::authenticate;
-use crate::clients::parser::ParseResult;
 use crate::state::AppState;
 
 use super::store::{CreateBomInput, StoreError};
+use super::types::BomSummary;
 
-pub async fn list_boms(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+#[derive(Debug, Deserialize)]
+pub struct ListBomsQuery {
+    limit: Option<u32>,
+    next_token: Option<String>,
+}
+
+pub async fn list_boms(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ListBomsQuery>,
+) -> impl IntoResponse {
     let user = match authenticate(state.auth.as_ref(), &headers).await {
         Ok(user) => user,
         Err(response) => return response.into_response(),
     };
 
+    let params = PageParams::from_query(query.limit, query.next_token);
+
     match state.bom_store.list_boms(&user.account_id).await {
-        Ok(boms) => Json(json!({ "boms": boms })).into_response(),
+        Ok(boms) => match page_by_id(&boms, &params, |bom: &BomSummary| bom.id.as_str()) {
+            Ok(page) => Json(page).into_response(),
+            Err(PageError::InvalidToken) => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "invalid next_token" })),
+            )
+                .into_response(),
+            Err(PageError::AmbiguousToken) => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "ambiguous next_token" })),
+            )
+                .into_response(),
+        },
         Err(error) => store_error_response(error).into_response(),
     }
 }
@@ -67,7 +94,6 @@ pub async fn create_bom(
         file_bytes: upload.file_bytes,
         content_type: upload.content_type,
         analyze: upload.analyze,
-        parse: upload.parse,
     };
 
     match state.bom_store.create_bom(input).await {
@@ -81,7 +107,6 @@ struct BomUpload {
     file_bytes: Vec<u8>,
     content_type: Option<String>,
     analyze: AnalyzeResult,
-    parse: Option<ParseResult>,
     name: Option<String>,
 }
 
@@ -90,7 +115,6 @@ async fn read_bom_upload(mut multipart: Multipart) -> Result<BomUpload, axum::re
     let mut file_bytes: Option<Vec<u8>> = None;
     let mut content_type: Option<String> = None;
     let mut analyze: Option<AnalyzeResult> = None;
-    let mut parse: Option<ParseResult> = None;
     let mut name: Option<String> = None;
 
     loop {
@@ -136,19 +160,6 @@ async fn read_bom_upload(mut multipart: Multipart) -> Result<BomUpload, axum::re
                 };
                 analyze = serde_json::from_str(&text).ok();
             }
-            Some("parse") => {
-                let text = match field.text().await {
-                    Ok(text) => text,
-                    Err(error) => {
-                        return Err((
-                            StatusCode::UNPROCESSABLE_ENTITY,
-                            Json(json!({ "error": error.to_string() })),
-                        )
-                            .into_response());
-                    }
-                };
-                parse = serde_json::from_str(&text).ok();
-            }
             Some("name") => {
                 name = field.text().await.ok();
             }
@@ -177,7 +188,6 @@ async fn read_bom_upload(mut multipart: Multipart) -> Result<BomUpload, axum::re
         file_bytes,
         content_type,
         analyze,
-        parse,
         name,
     })
 }

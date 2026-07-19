@@ -32,7 +32,6 @@ pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/v1/tariff", post(tariff_handler))
-        .route("/v1/tariff/data-status", get(data_status_handler))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|request: &Request<_>| {
@@ -65,11 +64,6 @@ async fn health() -> impl IntoResponse {
         "status": "ok",
         "service": "prokuro-tariff"
     }))
-}
-
-async fn data_status_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let today = chrono::Utc::now().date_naive();
-    Json(state.data.data_status(today))
 }
 
 async fn tariff_handler(

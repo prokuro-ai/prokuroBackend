@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
-
 use crate::GatewayError;
+
+pub use prokuro_types::enrichment::{EnrichInput, EnrichResult};
 
 const DEFAULT_ENRICHMENT_URL: &str = "http://localhost:3002";
 const ENRICHMENT_URL_ENV: &str = "ENRICHMENT_URL";
@@ -55,24 +55,4 @@ impl EnrichmentClient {
             .await
             .map_err(|error| GatewayError::EnrichmentError(error.to_string()))
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnrichInput {
-    pub mpn: String,
-    pub manufacturer: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnrichResult {
-    pub input_index: usize,
-    pub nexar_part_id: Option<String>,
-    pub matched_mpn: Option<String>,
-    pub matched_manufacturer: Option<String>,
-    pub match_status: String,
-    pub total_avail: i64,
-    pub availability_status: String,
-    pub lifecycle_status: String,
-    pub factory_lead_days: Option<i32>,
-    pub top_sellers: Vec<serde_json::Value>,
 }

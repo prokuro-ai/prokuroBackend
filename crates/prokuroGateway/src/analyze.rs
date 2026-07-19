@@ -55,10 +55,13 @@ pub struct AnalyzedLine {
     pub match_status: String,
     pub factory_lead_days: Option<i32>,
     pub total_avail: i64,
-    pub top_sellers: Vec<serde_json::Value>,
     pub risk_level: RiskLevel,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hts_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country_of_origin: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tariff_confidence: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -78,12 +81,15 @@ pub struct AnalyzedLine {
 }
 
 pub fn merge(parse: ParseResult, enrich: Vec<EnrichResult>) -> AnalyzeResult {
+    let by_index: std::collections::HashMap<usize, &EnrichResult> =
+        enrich.iter().map(|item| (item.input_index, item)).collect();
+
     let lines: Vec<AnalyzedLine> = parse
         .lines
         .iter()
         .enumerate()
         .map(|(idx, parsed)| {
-            let enrichment = enrich.get(idx);
+            let enrichment = by_index.get(&idx).copied();
             AnalyzedLine {
                 row_index: parsed.row_index,
                 mpn: parsed.mpn.clone(),
@@ -93,21 +99,20 @@ pub fn merge(parse: ParseResult, enrich: Vec<EnrichResult>) -> AnalyzeResult {
                 description: parsed.description.clone(),
                 aml_candidates: parsed.aml_candidates.clone(),
                 availability_status: enrichment
-                    .map(|e| e.availability_status.clone())
+                    .map(|e| e.availability_status.to_string())
                     .unwrap_or_default(),
                 lifecycle_status: enrichment
-                    .map(|e| e.lifecycle_status.clone())
+                    .map(|e| e.lifecycle_status.to_string())
                     .unwrap_or_default(),
                 match_status: enrichment
-                    .map(|e| e.match_status.clone())
+                    .map(|e| e.match_status.to_string())
                     .unwrap_or_default(),
                 factory_lead_days: enrichment.and_then(|e| e.factory_lead_days),
                 total_avail: enrichment.map(|e| e.total_avail).unwrap_or(0),
-                top_sellers: enrichment
-                    .map(|e| e.top_sellers.clone())
-                    .unwrap_or_default(),
                 risk_level: RiskLevel::Green,
-                hts_code: None,
+                category: enrichment.and_then(|e| e.category.clone()),
+                hts_code: enrichment.and_then(|e| e.hts_code.clone()),
+                country_of_origin: enrichment.and_then(|e| e.country_of_origin.clone()),
                 tariff_confidence: None,
                 base_duty_pct: None,
                 section_301_pct: None,
@@ -148,9 +153,12 @@ pub fn merge(parse: ParseResult, enrich: Vec<EnrichResult>) -> AnalyzeResult {
 }
 
 /// Copy tariff service fields onto analyzed lines (zip by index).
+/// Keeps an enrichment-provided HTS when the tariff service returns none.
 pub fn apply_tariff_results(lines: &mut [AnalyzedLine], tariff_results: Vec<TariffResult>) {
     for (line, tariff) in lines.iter_mut().zip(tariff_results) {
-        line.hts_code = tariff.hts_code;
+        if tariff.hts_code.is_some() {
+            line.hts_code = tariff.hts_code;
+        }
         line.tariff_confidence = Some(tariff.confidence);
         line.base_duty_pct = tariff.base_duty_pct;
         line.section_301_pct = tariff.section_301_pct;
@@ -233,20 +241,12 @@ pub fn score_risk(line: &AnalyzedLine) -> RiskLevel {
         return RiskLevel::Red;
     }
 
-    let tariff_confidence = line
-        .tariff_confidence
-        .as_deref()
-        .map(str::to_ascii_lowercase);
-    let weak_tariff = matches!(
-        tariff_confidence.as_deref(),
-        Some("low") | Some("unclassified")
-    );
-
-    if availability == "error"
+    if availability == "pending"
+        || availability == "error"
+        || availability == "outofstock"
         || lifecycle == "nrnd"
         || line.factory_lead_days.is_some_and(|days| days > 182)
         || (line.total_avail > 0 && line.total_avail < 100)
-        || weak_tariff
     {
         return RiskLevel::Yellow;
     }
@@ -304,9 +304,10 @@ mod tests {
             match_status: "Exact".into(),
             factory_lead_days: Some(14),
             total_avail: 5000,
-            top_sellers: Vec::new(),
             risk_level: RiskLevel::Green,
+            category: None,
             hts_code: None,
+            country_of_origin: None,
             tariff_confidence: None,
             base_duty_pct: None,
             section_301_pct: None,
@@ -362,6 +363,20 @@ mod tests {
     }
 
     #[test]
+    fn pending_availability_is_yellow() {
+        let mut line = healthy_line(0);
+        line.availability_status = "Pending".into();
+        assert_eq!(score_risk(&line), RiskLevel::Yellow);
+    }
+
+    #[test]
+    fn out_of_stock_availability_is_yellow() {
+        let mut line = healthy_line(0);
+        line.availability_status = "OutOfStock".into();
+        assert_eq!(score_risk(&line), RiskLevel::Yellow);
+    }
+
+    #[test]
     fn high_tariff_exposure_is_red_when_otherwise_healthy() {
         let mut line = healthy_line(1);
         line.total_duty_pct = Some(25.0);
@@ -378,6 +393,16 @@ mod tests {
     #[test]
     fn healthy_line_is_green() {
         assert_eq!(score_risk(&healthy_line(3)), RiskLevel::Green);
+    }
+
+    #[test]
+    fn weak_tariff_confidence_does_not_yellow_otherwise_healthy_line() {
+        let mut line = healthy_line(4);
+        line.tariff_confidence = Some("unclassified".into());
+        assert_eq!(score_risk(&line), RiskLevel::Green);
+
+        line.tariff_confidence = Some("low".into());
+        assert_eq!(score_risk(&line), RiskLevel::Green);
     }
 
     #[test]

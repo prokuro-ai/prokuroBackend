@@ -98,9 +98,10 @@ fn sample_line() -> AnalyzedLine {
         match_status: "Exact".into(),
         factory_lead_days: Some(14),
         total_avail: 5000,
-        top_sellers: Vec::new(),
         risk_level: RiskLevel::Green,
+        category: None,
         hts_code: None,
+        country_of_origin: None,
         tariff_confidence: None,
         base_duty_pct: None,
         section_301_pct: None,
@@ -218,9 +219,9 @@ async fn tariff_overlay_populates_analyzed_line_fields_from_mock_service() {
 }
 
 #[test]
-fn nexar_provider_error_maps_to_yellow_risk_and_is_not_cacheable_contract() {
+fn provider_error_maps_to_yellow_risk_contract() {
     // Integration contract across enrichment + gateway:
-    // GraphQL errors-without-data → AvailabilityStatus::Error + error_detail,
+    // Provider errors → AvailabilityStatus::Error + error_detail,
     // never cached, and gateway scores Yellow (not Red/NoMatch).
     use prokuro_gateway::analyze::{score_risk, RiskLevel};
 

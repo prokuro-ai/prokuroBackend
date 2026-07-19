@@ -42,8 +42,6 @@ pub enum AuthError {
     MissingHeader,
     #[error("invalid authorization header")]
     InvalidHeader,
-    #[error("auth is not configured")]
-    NotConfigured,
     #[error("token verification failed")]
     InvalidToken,
 }
@@ -153,12 +151,7 @@ pub async fn authenticate(
 
     auth.authenticate(headers)
         .await
-        .map_err(|error| match error {
-            AuthError::MissingHeader | AuthError::InvalidHeader | AuthError::InvalidToken => {
-                (StatusCode::UNAUTHORIZED, error.to_string())
-            }
-            AuthError::NotConfigured => (StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
-        })
+        .map_err(|error| (StatusCode::UNAUTHORIZED, error.to_string()))
 }
 
 fn bearer_token(headers: &HeaderMap) -> Result<&str, AuthError> {

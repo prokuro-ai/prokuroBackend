@@ -1,6 +1,14 @@
-//! Nexar enrichment library.
+//! Part enrichment service: Digi-Key + DynamoDB append-only snapshots.
 
-use std::collections::HashMap;
+pub mod providers;
+pub mod store;
+pub mod sync;
+pub mod types;
+pub mod worker;
+
+mod store_item;
+
+use std::sync::Arc;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::State;
@@ -9,18 +17,19 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::json;
-use sqlx::PgPool;
 
-pub mod cache;
-pub mod nexar;
+pub use prokuro_types::enrichment::{
+    AvailabilityStatus, EnrichInput, EnrichResult, LifecycleStatus, MatchStatus,
+};
+use types::{PartQuery, PartResult, normalize_mpn};
 
-use cache::{cache_key, fan_out, get_cached, line_keys, put_cached, unique_keys};
-use nexar::auth::AuthError;
-use nexar::client::{ClientError, MatchInput, MatchResult, NexarClient};
+use store::PartStore;
+use worker::{EnrichSender, try_enqueue};
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct AppState {
-    pub cache: Option<PgPool>,
+    pub store: Arc<PartStore>,
+    pub enrich_tx: EnrichSender,
 }
 
 pub fn app(state: AppState) -> Router {
@@ -39,7 +48,7 @@ async fn health() -> impl IntoResponse {
 
 async fn enrich_handler(
     State(state): State<AppState>,
-    payload: Result<Json<Vec<MatchInput>>, JsonRejection>,
+    payload: Result<Json<Vec<EnrichInput>>, JsonRejection>,
 ) -> impl IntoResponse {
     let lines = match payload {
         Ok(Json(lines)) if !lines.is_empty() => lines,
@@ -59,123 +68,93 @@ async fn enrich_handler(
         }
     };
 
-    tracing::debug!(
-        "NEXAR_CLIENT_ID present: {}",
-        std::env::var("NEXAR_CLIENT_ID").is_ok()
-    );
-    let client = match NexarClient::from_env() {
-        Ok(client) => client,
-        Err(AuthError::EnvVarMissing(error_key)) => {
-            tracing::error!(%error_key, "failed to build Nexar client from env");
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({"error": "Nexar credentials not configured"})),
-            )
-                .into_response()
-        }
+    match enrich_lines(&state, lines).await {
+        Ok(results) => Json(results).into_response(),
         Err(error) => {
-            tracing::error!(error = %error, "failed to build Nexar client from env");
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({"error": error.to_string()})),
+            tracing::error!(%error, "enrichment failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": error})),
             )
                 .into_response()
         }
-    };
-
-    match enrich_with_cache(&client, state.cache.as_ref(), &lines).await {
-        Ok(result) => Json(result).into_response(),
-        Err(ClientError::Timeout) => (
-            StatusCode::GATEWAY_TIMEOUT,
-            Json(json!({"error": "request timed out"})),
-        )
-            .into_response(),
-        Err(ClientError::Request(message)) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error": message})),
-        )
-            .into_response(),
-        Err(ClientError::Auth(error)) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({"error": error.to_string()})),
-        )
-            .into_response(),
     }
 }
 
-async fn enrich_with_cache(
-    client: &NexarClient,
-    pool: Option<&PgPool>,
-    lines: &[MatchInput],
-) -> Result<Vec<MatchResult>, ClientError> {
-    let keys = line_keys(lines);
-    let unique = unique_keys(&keys);
-    let mut results_by_key: HashMap<(String, String), MatchResult> = HashMap::new();
-    let mut cache_hits = 0usize;
+async fn enrich_lines(
+    state: &AppState,
+    lines: Vec<EnrichInput>,
+) -> Result<Vec<EnrichResult>, String> {
+    let mut results = Vec::with_capacity(lines.len());
+    for (idx, line) in lines.into_iter().enumerate() {
+        let query = PartQuery {
+            mpn: line.mpn,
+            manufacturer: line.manufacturer,
+        };
+        if normalize_mpn(&query.mpn).is_empty() {
+            results.push(no_mpn_result(idx));
+            continue;
+        }
 
-    if let Some(pool) = pool {
-        let unique_inputs: Vec<MatchInput> = unique
-            .iter()
-            .map(|(mpn, manufacturer)| MatchInput {
-                mpn: mpn.clone(),
-                manufacturer: if manufacturer.is_empty() {
-                    None
-                } else {
-                    Some(manufacturer.clone())
-                },
-            })
-            .collect();
-
-        match get_cached(pool, &unique_inputs).await {
-            Ok(cached) => {
-                cache_hits = cached.len();
-                results_by_key.extend(cached);
-            }
-            Err(error) => {
-                tracing::warn!(%error, "part cache read failed; falling back to Nexar");
+        let pk = query.part_key();
+        match state.store.get_latest(&pk).await.map_err(|e| e.to_string())? {
+            Some(part) => results.push(part_to_enrich(idx, &part)),
+            None => {
+                try_enqueue(&state.enrich_tx, query);
+                results.push(pending_result(idx));
             }
         }
     }
+    Ok(results)
+}
 
-    let misses: Vec<MatchInput> = unique
-        .iter()
-        .filter(|key| !results_by_key.contains_key(*key))
-        .map(|(mpn, manufacturer)| MatchInput {
-            mpn: mpn.clone(),
-            manufacturer: if manufacturer.is_empty() {
-                None
-            } else {
-                Some(manufacturer.clone())
-            },
-        })
-        .collect();
-    let nexar_fetches = misses.len();
-
-    if !misses.is_empty() {
-        let fetched = client.multi_match(&misses).await?;
-        let mut to_cache = Vec::with_capacity(fetched.len());
-
-        for (idx, mut result) in fetched.into_iter().enumerate() {
-            result.cached = false;
-            let key = cache_key(&misses[idx]);
-            to_cache.push((misses[idx].clone(), result.clone()));
-            results_by_key.insert(key, result);
-        }
-
-        if let Some(pool) = pool {
-            if let Err(error) = put_cached(pool, &to_cache).await {
-                tracing::warn!(%error, "part cache write failed");
-            }
-        }
+fn no_mpn_result(input_index: usize) -> EnrichResult {
+    EnrichResult {
+        input_index,
+        provider_part_id: None,
+        matched_mpn: None,
+        matched_manufacturer: None,
+        match_status: MatchStatus::None,
+        total_avail: 0,
+        availability_status: AvailabilityStatus::NoMatch,
+        lifecycle_status: LifecycleStatus::Unknown,
+        factory_lead_days: None,
+        hts_code: None,
+        country_of_origin: None,
+        category: None,
     }
+}
 
-    tracing::info!(
-        total_lines = lines.len(),
-        unique_parts = unique.len(),
-        cache_hits,
-        nexar_fetches,
-        "enrichment cache stats"
-    );
+fn pending_result(input_index: usize) -> EnrichResult {
+    EnrichResult {
+        input_index,
+        provider_part_id: None,
+        matched_mpn: None,
+        matched_manufacturer: None,
+        match_status: MatchStatus::Pending,
+        total_avail: 0,
+        availability_status: AvailabilityStatus::Pending,
+        lifecycle_status: LifecycleStatus::Unknown,
+        factory_lead_days: None,
+        hts_code: None,
+        country_of_origin: None,
+        category: None,
+    }
+}
 
-    Ok(fan_out(&keys, &results_by_key))
+fn part_to_enrich(input_index: usize, part: &PartResult) -> EnrichResult {
+    EnrichResult {
+        input_index,
+        provider_part_id: part.provider_part_id.clone(),
+        matched_mpn: part.matched_mpn.clone(),
+        matched_manufacturer: part.matched_manufacturer.clone(),
+        match_status: part.match_status,
+        total_avail: part.total_avail,
+        availability_status: part.availability_status,
+        lifecycle_status: part.lifecycle_status,
+        factory_lead_days: part.factory_lead_days,
+        hts_code: part.hts_code.clone(),
+        country_of_origin: part.country_of_origin.clone(),
+        category: part.category.clone(),
+    }
 }
