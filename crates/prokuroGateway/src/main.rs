@@ -1,7 +1,6 @@
 use std::{env, net::SocketAddr, time::Duration};
 
 use axum::{extract::MatchedPath, http::Request};
-use tokio::signal::unix::{signal, SignalKind};
 use tower_http::trace::TraceLayer;
 use tracing::info_span;
 
@@ -61,13 +60,31 @@ async fn main() -> Result<(), std::io::Error> {
 }
 
 async fn shutdown_signal() {
-    match signal(SignalKind::terminate()) {
-        Ok(mut sigterm) => {
-            sigterm.recv().await;
-            tracing::info!("SIGTERM received, shutting down");
+    let ctrl_c = async {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            tracing::warn!(%error, "failed to install Ctrl+C handler");
         }
-        Err(error) => {
-            tracing::warn!(%error, "failed to install SIGTERM handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                sigterm.recv().await;
+            }
+            Err(error) => {
+                tracing::warn!(%error, "failed to install SIGTERM handler");
+                std::future::pending::<()>().await;
+            }
         }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
     }
+    tracing::info!("shutdown signal received");
 }

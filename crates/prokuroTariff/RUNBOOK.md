@@ -1,8 +1,8 @@
 # Tariff data review runbook
 
-Human-verified updates on a cadence — not live scraping. Check
-`GET /v1/tariff/data-status` before a customer demo; if `is_stale` is true,
-run this review before relying on the numbers.
+Human-verified updates on a cadence — not live scraping. Before a customer demo,
+spot-check that `meta.next_review_due` in the data files has not passed; if
+either file is overdue, run this review before relying on the numbers.
 
 ## What to check
 
@@ -30,5 +30,4 @@ Update the top-level `meta` block in **each** file you reviewed:
 | `next_review_due` | `retrieved_at` + **90 days** for `hts_electronics.json`; `retrieved_at` + **30 days** for `section_301.json` |
 
 If rates *did* change: edit the entry fields in that JSON file, then update
-`meta` as above. Rebuild/restart `prokuro-tariff` and confirm
-`/v1/tariff/data-status` shows `is_stale: false`.
+`meta` as above. Rebuild/restart `prokuro-tariff`.

@@ -11,7 +11,7 @@ name = "prokuro-tariff"
 path = "src/main.rs"
 
 [dependencies]
-axum = { version = "*", features = ["multipart"] }
+axum = "*"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 tokio = { version = "*", features = ["full"] }
 serde = { version = "*", features = ["derive"] }

@@ -11,6 +11,7 @@ name = "prokuro-gateway"
 path = "src/main.rs"
 
 [dependencies]
+prokuro-types = { path = "../prokuroTypes" }
 axum = { version = "*", features = ["multipart"] }
 tokio = { version = "*", features = ["full"] }
 serde = { version = "*", features = ["derive"] }

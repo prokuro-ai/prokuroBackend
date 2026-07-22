@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::analyze::AnalyzeResult;
-use crate::clients::parser::ParseResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,7 +18,6 @@ pub struct BomSummary {
 pub struct BomRecord {
     pub summary: BomSummary,
     pub analyze: AnalyzeResult,
-    pub parse: Option<ParseResult>,
 }
 
 pub fn at_risk_count(summary: &crate::analyze::AnalyzeSummary) -> usize {

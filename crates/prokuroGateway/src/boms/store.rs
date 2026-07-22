@@ -5,7 +5,6 @@ use aws_sdk_s3::Client as S3Client;
 use serde::{Deserialize, Serialize};
 
 use crate::analyze::AnalyzeResult;
-use crate::clients::parser::ParseResult;
 
 use super::types::{
     at_risk_count, default_bom_name, extension_for, overall_risk_score, BomRecord, BomSummary,
@@ -50,7 +49,6 @@ pub struct CreateBomInput {
     pub file_bytes: Vec<u8>,
     pub content_type: Option<String>,
     pub analyze: AnalyzeResult,
-    pub parse: Option<ParseResult>,
 }
 
 impl BomStore {
@@ -87,15 +85,10 @@ impl BomStore {
         let analyze = self
             .read_json::<AnalyzeResult>(&format!("{prefix}/analyze.json"))
             .await?;
-        let parse = self
-            .read_json::<ParseResult>(&format!("{prefix}/parse.json"))
-            .await
-            .ok();
 
         Ok(BomRecord {
             summary: metadata.summary,
             analyze,
-            parse,
         })
     }
 
@@ -123,10 +116,6 @@ impl BomStore {
         .await?;
         self.write_json(&format!("{prefix}/analyze.json"), &input.analyze)
             .await?;
-        if let Some(parse) = &input.parse {
-            self.write_json(&format!("{prefix}/parse.json"), parse)
-                .await?;
-        }
         self.write_json(
             &format!("{prefix}/metadata.json"),
             &BomMetadata {
@@ -378,7 +367,6 @@ mod tests {
             file_bytes: b"mpn,qty\nabc,1".to_vec(),
             content_type: Some("text/csv".to_string()),
             analyze: sample_analyze("bom-1"),
-            parse: None,
         };
         store.create_bom(input).await.expect("create");
 

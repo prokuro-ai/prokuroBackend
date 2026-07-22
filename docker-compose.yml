@@ -8,17 +8,6 @@ services:
     environment:
       - PORT=3001
 
-  postgres:
-    image: postgres:16-alpine
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_USER: prokuro
-      POSTGRES_PASSWORD: prokuro
-      POSTGRES_DB: prokuro
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
   enrichment:
     build:
       context: .
@@ -27,11 +16,16 @@ services:
       - "3002:3002"
     environment:
       - PORT=3002
-      - NEXAR_CLIENT_ID=${NEXAR_CLIENT_ID}
-      - NEXAR_CLIENT_SECRET=${NEXAR_CLIENT_SECRET}
-      - DATABASE_URL=postgres://prokuro:prokuro@postgres:5432/prokuro
-    depends_on:
-      - postgres
+      - DIGIKEY_CLIENT_ID=${DIGIKEY_CLIENT_ID}
+      - DIGIKEY_CLIENT_SECRET=${DIGIKEY_CLIENT_SECRET}
+      - AWS_REGION=${AWS_REGION:-us-west-2}
+      - PARTS_TABLE=${PARTS_TABLE:-prokuro-parts}
+      - UNRESOLVED_TABLE=${UNRESOLVED_TABLE:-prokuro-unresolved}
+      - OTEL_SDK_DISABLED=${OTEL_SDK_DISABLED:-true}
+      - DIGIKEY_MIN_INTERVAL_MS=${DIGIKEY_MIN_INTERVAL_MS:-750}
+      - DIGIKEY_MAX_PER_DAY=${DIGIKEY_MAX_PER_DAY:-1000}
+    # Uses the default AWS credential chain (env / profile / IAM).
+    # Point PARTS_TABLE / UNRESOLVED_TABLE at the CDK-provisioned tables.
 
   tariff:
     build:
@@ -67,4 +61,3 @@ services:
 
 volumes:
   bom-data:
-  pgdata:
