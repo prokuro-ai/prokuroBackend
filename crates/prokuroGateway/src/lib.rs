@@ -9,7 +9,7 @@ use axum::{Json, Router};
 use serde_json::json;
 
 use analyze::{apply_tariff_results, finalize_analyze, merge, AnalyzeResult};
-use boms::handlers::{create_bom, delete_bom, get_bom, list_boms};
+use boms::handlers::{create_bom, delete_bom, get_bom, list_boms, refresh_bom};
 use clients::enrichment::{EnrichInput, EnrichmentClient};
 use clients::parser::ParserClient;
 use clients::tariff::{TariffClient, TariffInput};
@@ -44,6 +44,7 @@ pub fn app(state: AppState) -> Router {
         .route("/v1/analyze", post(analyze_handler))
         .route("/v1/boms", get(list_boms).post(create_bom))
         .route("/v1/boms/{id}", get(get_bom).delete(delete_bom))
+        .route("/v1/boms/{id}/refresh", post(refresh_bom))
         .with_state(state)
 }
 
@@ -147,18 +148,32 @@ async fn analyze_handler(multipart: Multipart) -> impl IntoResponse {
         Err(response) => return response.into_response(),
     };
 
+    match analyze_upload(&filename, bytes, false, None).await {
+        Ok(result) => Json(result).into_response(),
+        Err(error) => analyze_pipeline_error_response(error).into_response(),
+    }
+}
+
+#[derive(Debug)]
+pub enum AnalyzePipelineError {
+    Parser(GatewayError),
+    LowMappingConfidence,
+}
+
+pub async fn analyze_upload(
+    filename: &str,
+    bytes: Vec<u8>,
+    force_refresh: bool,
+    preserve_upload_id: Option<String>,
+) -> Result<AnalyzeResult, AnalyzePipelineError> {
     let parser = ParserClient::from_env();
-    let parse = match parser.parse(&filename, bytes).await {
+    let parse = match parser.parse(filename, bytes).await {
         Ok(result) => result,
-        Err(error) => return parser_error_response(error).into_response(),
+        Err(error) => return Err(AnalyzePipelineError::Parser(error)),
     };
 
     if parse.mapping_confidence < 0.3 {
-        return (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({"error": "mapping confidence below threshold"})),
-        )
-            .into_response();
+        return Err(AnalyzePipelineError::LowMappingConfidence);
     }
 
     let enrich_inputs: Vec<EnrichInput> = parse
@@ -171,7 +186,7 @@ async fn analyze_handler(multipart: Multipart) -> impl IntoResponse {
         .collect();
 
     let enrich_client = EnrichmentClient::from_env();
-    let (enrich, enrichment_warning) = match enrich_client.enrich(&enrich_inputs).await {
+    let (enrich, enrichment_warning) = match enrich_client.enrich(&enrich_inputs, force_refresh).await {
         Ok(result) => (result, None),
         Err(error) => {
             tracing::warn!(%error, "enrichment unavailable; continuing with parse-only lines");
@@ -189,10 +204,23 @@ async fn analyze_handler(multipart: Multipart) -> impl IntoResponse {
     if let Some(warning) = enrichment_warning {
         merged.warnings.push(warning);
     }
+    if let Some(upload_id) = preserve_upload_id {
+        merged.upload_id = upload_id;
+    }
 
     apply_tariff_overlay(&mut merged).await;
 
-    Json(merged).into_response()
+    Ok(merged)
+}
+
+fn analyze_pipeline_error_response(error: AnalyzePipelineError) -> (StatusCode, Json<serde_json::Value>) {
+    match error {
+        AnalyzePipelineError::Parser(gateway_error) => parser_error_response(gateway_error),
+        AnalyzePipelineError::LowMappingConfidence => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"error": "mapping confidence below threshold"})),
+        ),
+    }
 }
 
 async fn apply_tariff_overlay(merged: &mut AnalyzeResult) {

@@ -12,7 +12,8 @@ mod store_item;
 use std::sync::Arc;
 
 use axum::extract::rejection::JsonRejection;
-use axum::extract::State;
+use axum::extract::{Query, State};
+use serde::Deserialize;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -47,8 +48,15 @@ async fn health() -> impl IntoResponse {
     }))
 }
 
+#[derive(Debug, Deserialize)]
+struct EnrichQuery {
+    #[serde(default)]
+    force_refresh: bool,
+}
+
 async fn enrich_handler(
     State(state): State<AppState>,
+    Query(query): Query<EnrichQuery>,
     payload: Result<Json<Vec<EnrichInput>>, JsonRejection>,
 ) -> impl IntoResponse {
     let lines = match payload {
@@ -69,7 +77,7 @@ async fn enrich_handler(
         }
     };
 
-    match enrich_lines(&state, lines).await {
+    match enrich_lines(&state, lines, query.force_refresh).await {
         Ok(results) => Json(results).into_response(),
         Err(error) => {
             tracing::error!(%error, "enrichment failed");
@@ -85,6 +93,7 @@ async fn enrich_handler(
 async fn enrich_lines(
     state: &AppState,
     lines: Vec<EnrichInput>,
+    force_refresh: bool,
 ) -> Result<Vec<EnrichResult>, String> {
     let mut results = Vec::with_capacity(lines.len());
     for (idx, line) in lines.into_iter().enumerate() {
@@ -98,25 +107,23 @@ async fn enrich_lines(
         }
 
         let pk = query.part_key();
-        match state.store.get_latest(&pk).await.map_err(|e| e.to_string())? {
-            Some(part) => {
+        if !force_refresh {
+            if let Some(part) = state.store.get_latest(&pk).await.map_err(|e| e.to_string())? {
                 metrics::digikey_cache_hit();
                 results.push(part_to_enrich(idx, &part, EnrichSource::Cache));
+                continue;
             }
-            None => {
-                metrics::digikey_live_miss();
-                match process_one(&state.store, state.provider.as_ref(), &query).await {
-                    Ok(part) => results.push(part_to_enrich(idx, &part, EnrichSource::LiveMiss)),
-                    Err(error)
-                        if error.contains("rate limited") || error.contains("RateLimited") =>
-                    {
-                        results.push(pending_result(idx));
-                    }
-                    Err(error) => {
-                        tracing::warn!(%pk, %error, "live enrich failed");
-                        results.push(pending_result(idx));
-                    }
-                }
+        }
+
+        metrics::digikey_live_miss();
+        match process_one(&state.store, state.provider.as_ref(), &query).await {
+            Ok(part) => results.push(part_to_enrich(idx, &part, EnrichSource::LiveMiss)),
+            Err(error) if error.contains("rate limited") || error.contains("RateLimited") => {
+                results.push(pending_result(idx));
+            }
+            Err(error) => {
+                tracing::warn!(%pk, %error, "live enrich failed");
+                results.push(pending_result(idx));
             }
         }
     }

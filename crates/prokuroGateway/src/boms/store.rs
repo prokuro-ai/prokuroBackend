@@ -92,6 +92,51 @@ impl BomStore {
         })
     }
 
+    pub async fn read_source_bytes(
+        &self,
+        account_id: &str,
+        bom_id: &str,
+        filename: &str,
+    ) -> Result<Vec<u8>, StoreError> {
+        let prefix = self.bom_prefix(account_id, bom_id);
+        let ext = extension_for(filename);
+        self.read_bytes(&format!("{prefix}/source{ext}")).await
+    }
+
+    pub async fn update_analyze(
+        &self,
+        account_id: &str,
+        bom_id: &str,
+        analyze: AnalyzeResult,
+    ) -> Result<BomRecord, StoreError> {
+        let prefix = self.bom_prefix(account_id, bom_id);
+        let mut metadata = self
+            .read_json::<BomMetadata>(&format!("{prefix}/metadata.json"))
+            .await?;
+
+        metadata.summary.line_count = analyze.summary.total;
+        metadata.summary.overall_risk_score = overall_risk_score(&analyze.summary);
+        metadata.summary.at_risk_count = at_risk_count(&analyze.summary);
+
+        self.write_json(&format!("{prefix}/analyze.json"), &analyze)
+            .await?;
+        self.write_json(&format!("{prefix}/metadata.json"), &metadata)
+            .await?;
+
+        let mut index = self.read_index(account_id).await?;
+        if let Some(item) = index.boms.iter_mut().find(|item| item.id == bom_id) {
+            item.line_count = metadata.summary.line_count;
+            item.overall_risk_score = metadata.summary.overall_risk_score;
+            item.at_risk_count = metadata.summary.at_risk_count;
+        }
+        self.write_index(account_id, &index).await?;
+
+        Ok(BomRecord {
+            summary: metadata.summary,
+            analyze,
+        })
+    }
+
     pub async fn create_bom(&self, input: CreateBomInput) -> Result<BomSummary, StoreError> {
         let bom_id = input.analyze.upload_id.clone();
         let prefix = self.bom_prefix(&input.account_id, &bom_id);
