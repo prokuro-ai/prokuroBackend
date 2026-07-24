@@ -20,7 +20,7 @@ reqwest = { version = "*", features = ["json", "multipart"] }
 thiserror = "*"
 tracing = "*"
 tracing-subscriber = "*"
-tower-http = { version = "*", features = ["trace"] }
+tower-http = { version = "*", features = ["trace", "cors"] }
 uuid = { version = "*", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 jsonwebtoken = "9"

@@ -2,14 +2,15 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::Multipart;
-use axum::http::StatusCode;
+use axum::http::{header, Method, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::json;
+use tower_http::cors::{Any, CorsLayer};
 
 use analyze::{apply_tariff_results, finalize_analyze, merge, AnalyzeResult};
-use boms::handlers::{create_bom, delete_bom, get_bom, list_boms, refresh_bom};
+use boms::handlers::{create_bom, delete_bom, get_bom, list_boms};
 use clients::enrichment::{EnrichInput, EnrichmentClient};
 use clients::parser::ParserClient;
 use clients::tariff::{TariffClient, TariffInput};
@@ -38,13 +39,23 @@ pub enum GatewayError {
 }
 
 pub fn app(state: AppState) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
+
     Router::new()
         .route("/health", get(health))
         .route("/v1/parse", post(parse_handler))
         .route("/v1/analyze", post(analyze_handler))
         .route("/v1/boms", get(list_boms).post(create_bom))
         .route("/v1/boms/{id}", get(get_bom).delete(delete_bom))
-        .route("/v1/boms/{id}/refresh", post(refresh_bom))
+        .layer(cors)
         .with_state(state)
 }
 
@@ -148,7 +159,7 @@ async fn analyze_handler(multipart: Multipart) -> impl IntoResponse {
         Err(response) => return response.into_response(),
     };
 
-    match analyze_upload(&filename, bytes, false, None).await {
+    match analyze_upload(&filename, bytes).await {
         Ok(result) => Json(result).into_response(),
         Err(error) => analyze_pipeline_error_response(error).into_response(),
     }
@@ -160,11 +171,9 @@ pub enum AnalyzePipelineError {
     LowMappingConfidence,
 }
 
-pub async fn analyze_upload(
+async fn analyze_upload(
     filename: &str,
     bytes: Vec<u8>,
-    force_refresh: bool,
-    preserve_upload_id: Option<String>,
 ) -> Result<AnalyzeResult, AnalyzePipelineError> {
     let parser = ParserClient::from_env();
     let parse = match parser.parse(filename, bytes).await {
@@ -186,7 +195,7 @@ pub async fn analyze_upload(
         .collect();
 
     let enrich_client = EnrichmentClient::from_env();
-    let (enrich, enrichment_warning) = match enrich_client.enrich(&enrich_inputs, force_refresh).await {
+    let (enrich, enrichment_warning) = match enrich_client.enrich(&enrich_inputs).await {
         Ok(result) => (result, None),
         Err(error) => {
             tracing::warn!(%error, "enrichment unavailable; continuing with parse-only lines");
@@ -203,9 +212,6 @@ pub async fn analyze_upload(
     let mut merged = merge(parse, enrich);
     if let Some(warning) = enrichment_warning {
         merged.warnings.push(warning);
-    }
-    if let Some(upload_id) = preserve_upload_id {
-        merged.upload_id = upload_id;
     }
 
     apply_tariff_overlay(&mut merged).await;

@@ -71,55 +71,6 @@ pub async fn get_bom(
     }
 }
 
-pub async fn refresh_bom(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(bom_id): Path<String>,
-) -> impl IntoResponse {
-    let user = match authenticate(state.auth.as_ref(), &headers).await {
-        Ok(user) => user,
-        Err(response) => return response.into_response(),
-    };
-
-    let record = match state.bom_store.get_bom(&user.account_id, &bom_id).await {
-        Ok(record) => record,
-        Err(StoreError::NotFound) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({ "error": "BOM not found" })),
-            )
-                .into_response();
-        }
-        Err(error) => return store_error_response(error).into_response(),
-    };
-
-    let bytes = match state
-        .bom_store
-        .read_source_bytes(&user.account_id, &bom_id, &record.summary.filename)
-        .await
-    {
-        Ok(bytes) => bytes,
-        Err(error) => return store_error_response(error).into_response(),
-    };
-
-    let upload_id = record.analyze.upload_id.clone();
-    let filename = record.summary.filename.clone();
-
-    let analyze = match crate::analyze_upload(&filename, bytes, true, Some(upload_id)).await {
-        Ok(analyze) => analyze,
-        Err(error) => return crate::analyze_pipeline_error_response(error).into_response(),
-    };
-
-    match state
-        .bom_store
-        .update_analyze(&user.account_id, &bom_id, analyze)
-        .await
-    {
-        Ok(record) => Json(record).into_response(),
-        Err(error) => store_error_response(error).into_response(),
-    }
-}
-
 pub async fn create_bom(
     State(state): State<AppState>,
     headers: HeaderMap,

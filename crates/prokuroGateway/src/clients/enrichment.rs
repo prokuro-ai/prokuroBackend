@@ -29,12 +29,8 @@ impl EnrichmentClient {
     pub async fn enrich(
         &self,
         lines: &[EnrichInput],
-        force_refresh: bool,
     ) -> Result<Vec<EnrichResult>, GatewayError> {
-        let mut url = format!("{}/v1/enrich", self.base_url.trim_end_matches('/'));
-        if force_refresh {
-            url.push_str("?force_refresh=true");
-        }
+        let url = format!("{}/v1/enrich", self.base_url.trim_end_matches('/'));
         let response = self
             .http
             .post(url)
