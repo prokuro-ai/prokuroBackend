@@ -19,3 +19,8 @@ corpus/reports/
 bom_data/
 # ^ these are stuff is the FAT files that we scraped from Github.
 # for smaller files to play around with, check corpus/raw/
+
+# outbound prospects / local scripts
+scripts/
+*prospect*
+*.csv
