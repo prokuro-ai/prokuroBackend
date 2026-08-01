@@ -2,16 +2,16 @@ use axum::extract::{Multipart, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use prokuro_types::pagination::{page_by_id, PageError, PageParams};
 
-use crate::analyze::AnalyzeResult;
+use crate::analyze::{AnalyzedLine, AnalyzeResult};
 use crate::auth::authenticate;
 use crate::state::AppState;
 
-use super::store::{CreateBomInput, StoreError};
+use super::store::{CreateBomInput, LinePatch, NewLineInput, StoreError};
 use super::types::BomSummary;
 
 #[derive(Debug, Deserialize)]
@@ -210,6 +210,189 @@ pub async fn delete_bom(
         )
             .into_response(),
         Err(error) => store_error_response(error).into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PutBomBody {
+    pub version: u64,
+    pub lines: Vec<AnalyzedLine>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PatchLineBody {
+    pub version: u64,
+    pub mpn: Option<String>,
+    pub manufacturer: Option<String>,
+    pub quantity: Option<f64>,
+    pub refdes: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddLineBody {
+    pub version: u64,
+    pub mpn: Option<String>,
+    pub manufacturer: Option<String>,
+    pub quantity: Option<f64>,
+    pub refdes: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VersionQuery {
+    pub version: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LineMutationResponse {
+    version: u64,
+    line_index: usize,
+    line: AnalyzedLine,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteLineResponse {
+    version: u64,
+    line_count: usize,
+}
+
+pub async fn put_bom(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(bom_id): Path<String>,
+    Json(body): Json<PutBomBody>,
+) -> impl IntoResponse {
+    let user = match authenticate(state.auth.as_ref(), &headers).await {
+        Ok(user) => user,
+        Err(response) => return response.into_response(),
+    };
+
+    match state
+        .bom_store
+        .replace_lines(&user.account_id, &bom_id, body.version, body.lines)
+        .await
+    {
+        Ok(record) => Json(record).into_response(),
+        Err(error) => mutation_error_response(error).into_response(),
+    }
+}
+
+pub async fn patch_line(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((bom_id, line_index)): Path<(String, usize)>,
+    Json(body): Json<PatchLineBody>,
+) -> impl IntoResponse {
+    let user = match authenticate(state.auth.as_ref(), &headers).await {
+        Ok(user) => user,
+        Err(response) => return response.into_response(),
+    };
+
+    let patch = LinePatch {
+        mpn: body.mpn,
+        manufacturer: body.manufacturer,
+        quantity: body.quantity,
+        refdes: body.refdes,
+        description: body.description,
+    };
+
+    match state
+        .bom_store
+        .patch_line(&user.account_id, &bom_id, line_index, body.version, patch)
+        .await
+    {
+        Ok(result) => Json(LineMutationResponse {
+            version: result.version,
+            line_index: result.line_index,
+            line: result.line,
+        })
+        .into_response(),
+        Err(error) => mutation_error_response(error).into_response(),
+    }
+}
+
+pub async fn delete_line(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((bom_id, line_index)): Path<(String, usize)>,
+    Query(query): Query<VersionQuery>,
+) -> impl IntoResponse {
+    let user = match authenticate(state.auth.as_ref(), &headers).await {
+        Ok(user) => user,
+        Err(response) => return response.into_response(),
+    };
+
+    match state
+        .bom_store
+        .delete_line(&user.account_id, &bom_id, line_index, query.version)
+        .await
+    {
+        Ok(result) => Json(DeleteLineResponse {
+            version: result.version,
+            line_count: result.line_count,
+        })
+        .into_response(),
+        Err(error) => mutation_error_response(error).into_response(),
+    }
+}
+
+pub async fn add_line(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(bom_id): Path<String>,
+    Json(body): Json<AddLineBody>,
+) -> impl IntoResponse {
+    let user = match authenticate(state.auth.as_ref(), &headers).await {
+        Ok(user) => user,
+        Err(response) => return response.into_response(),
+    };
+
+    let input = NewLineInput {
+        mpn: body.mpn,
+        manufacturer: body.manufacturer,
+        quantity: body.quantity,
+        refdes: body.refdes,
+        description: body.description,
+    };
+
+    match state
+        .bom_store
+        .add_line(&user.account_id, &bom_id, body.version, input)
+        .await
+    {
+        Ok(result) => (
+            StatusCode::CREATED,
+            Json(LineMutationResponse {
+                version: result.version,
+                line_index: result.line_index,
+                line: result.line,
+            }),
+        )
+            .into_response(),
+        Err(error) => mutation_error_response(error).into_response(),
+    }
+}
+
+fn mutation_error_response(error: StoreError) -> (StatusCode, Json<serde_json::Value>) {
+    match error {
+        StoreError::NotFound => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "BOM not found" })),
+        ),
+        StoreError::Conflict => (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "this BOM was updated elsewhere, refresh to see the latest"
+            })),
+        ),
+        StoreError::LineNotFound => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "line not found" })),
+        ),
+        other => store_error_response(other),
     }
 }
 

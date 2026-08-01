@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::analyze::AnalyzeResult;
 
+fn default_bom_version() -> u64 {
+    1
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BomSummary {
@@ -9,6 +13,14 @@ pub struct BomSummary {
     pub name: String,
     pub filename: String,
     pub uploaded_at: String,
+    /// Monotonic optimistic-concurrency token. Clients must echo the version they
+    /// last read on write; mismatch → 409 Conflict.
+    #[serde(default = "default_bom_version")]
+    pub version: u64,
+    /// Last successful edit timestamp (ISO-8601). Defaults to `uploaded_at` for
+    /// records created before this field existed.
+    #[serde(default)]
+    pub updated_at: String,
     pub line_count: usize,
     pub overall_risk_score: f64,
     pub at_risk_count: usize,

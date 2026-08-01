@@ -4,7 +4,7 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client as S3Client;
 use serde::{Deserialize, Serialize};
 
-use crate::analyze::AnalyzeResult;
+use crate::analyze::{finalize_analyze, AnalyzedLine, AnalyzeResult, RiskLevel};
 
 use super::types::{
     at_risk_count, default_bom_name, extension_for, overall_risk_score, BomRecord, BomSummary,
@@ -18,6 +18,10 @@ pub enum StoreError {
     Write(String),
     #[error("bom not found")]
     NotFound,
+    #[error("version conflict")]
+    Conflict,
+    #[error("line not found")]
+    LineNotFound,
 }
 
 pub struct BomStore {
@@ -51,6 +55,39 @@ pub struct CreateBomInput {
     pub analyze: AnalyzeResult,
 }
 
+/// Partial update for a single BOM line. Absent fields are left unchanged.
+#[derive(Debug, Clone, Default)]
+pub struct LinePatch {
+    pub mpn: Option<String>,
+    pub manufacturer: Option<String>,
+    pub quantity: Option<f64>,
+    pub refdes: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Fields accepted when appending a line (AnalyzedLine identity fields only).
+#[derive(Debug, Clone, Default)]
+pub struct NewLineInput {
+    pub mpn: Option<String>,
+    pub manufacturer: Option<String>,
+    pub quantity: Option<f64>,
+    pub refdes: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LineEditResult {
+    pub version: u64,
+    pub line_index: usize,
+    pub line: AnalyzedLine,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeleteLineResult {
+    pub version: u64,
+    pub line_count: usize,
+}
+
 impl BomStore {
     pub async fn from_env() -> Self {
         if let Ok(bucket) = std::env::var("BOM_BUCKET_NAME") {
@@ -65,6 +102,10 @@ impl BomStore {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(".data/boms"));
 
+        Self::local(root)
+    }
+
+    pub fn local(root: PathBuf) -> Self {
         Self {
             mode: StoreMode::Local { root },
         }
@@ -72,7 +113,7 @@ impl BomStore {
 
     pub async fn list_boms(&self, account_id: &str) -> Result<Vec<BomSummary>, StoreError> {
         let index = self.read_index(account_id).await?;
-        let mut boms = index.boms;
+        let mut boms: Vec<BomSummary> = index.boms.into_iter().map(normalize_summary).collect();
         boms.sort_by(|a, b| b.uploaded_at.cmp(&a.uploaded_at));
         Ok(boms)
     }
@@ -87,7 +128,7 @@ impl BomStore {
             .await?;
 
         Ok(BomRecord {
-            summary: metadata.summary,
+            summary: normalize_summary(metadata.summary),
             analyze,
         })
     }
@@ -101,7 +142,9 @@ impl BomStore {
             id: bom_id.clone(),
             name,
             filename: input.filename.clone(),
-            uploaded_at,
+            uploaded_at: uploaded_at.clone(),
+            version: 1,
+            updated_at: uploaded_at,
             line_count: input.analyze.summary.total,
             overall_risk_score: overall_risk_score(&input.analyze.summary),
             at_risk_count: at_risk_count(&input.analyze.summary),
@@ -144,6 +187,154 @@ impl BomStore {
 
         let prefix = self.bom_prefix(account_id, bom_id);
         self.delete_prefix(&prefix).await
+    }
+
+    /// Replace all analyzed lines. `line_index` in the API is the 0-based position in
+    /// this vector; after deletes, later indices shift down.
+    pub async fn replace_lines(
+        &self,
+        account_id: &str,
+        bom_id: &str,
+        expected_version: u64,
+        lines: Vec<AnalyzedLine>,
+    ) -> Result<BomRecord, StoreError> {
+        let (mut metadata, mut analyze) = self.load_mutable(account_id, bom_id).await?;
+        ensure_version(&metadata.summary, expected_version)?;
+
+        analyze.lines = lines;
+        finalize_analyze(&mut analyze);
+        bump_summary_after_edit(&mut metadata.summary, &analyze);
+        self.persist_bom(account_id, &metadata, &analyze).await?;
+
+        Ok(BomRecord {
+            summary: metadata.summary,
+            analyze,
+        })
+    }
+
+    pub async fn patch_line(
+        &self,
+        account_id: &str,
+        bom_id: &str,
+        line_index: usize,
+        expected_version: u64,
+        patch: LinePatch,
+    ) -> Result<LineEditResult, StoreError> {
+        let (mut metadata, mut analyze) = self.load_mutable(account_id, bom_id).await?;
+        ensure_version(&metadata.summary, expected_version)?;
+
+        let line = analyze
+            .lines
+            .get_mut(line_index)
+            .ok_or(StoreError::LineNotFound)?;
+        apply_line_patch(line, &patch);
+        finalize_analyze(&mut analyze);
+        bump_summary_after_edit(&mut metadata.summary, &analyze);
+        self.persist_bom(account_id, &metadata, &analyze).await?;
+
+        Ok(LineEditResult {
+            version: metadata.summary.version,
+            line_index,
+            line: analyze.lines[line_index].clone(),
+        })
+    }
+
+    /// Removes the line at `line_index` (0-based vector index). Remaining lines keep
+    /// their `row_index` source values; subsequent API indices shift down by one.
+    pub async fn delete_line(
+        &self,
+        account_id: &str,
+        bom_id: &str,
+        line_index: usize,
+        expected_version: u64,
+    ) -> Result<DeleteLineResult, StoreError> {
+        let (mut metadata, mut analyze) = self.load_mutable(account_id, bom_id).await?;
+        ensure_version(&metadata.summary, expected_version)?;
+
+        if line_index >= analyze.lines.len() {
+            return Err(StoreError::LineNotFound);
+        }
+        analyze.lines.remove(line_index);
+        finalize_analyze(&mut analyze);
+        bump_summary_after_edit(&mut metadata.summary, &analyze);
+        self.persist_bom(account_id, &metadata, &analyze).await?;
+
+        Ok(DeleteLineResult {
+            version: metadata.summary.version,
+            line_count: analyze.lines.len(),
+        })
+    }
+
+    pub async fn add_line(
+        &self,
+        account_id: &str,
+        bom_id: &str,
+        expected_version: u64,
+        input: NewLineInput,
+    ) -> Result<LineEditResult, StoreError> {
+        let (mut metadata, mut analyze) = self.load_mutable(account_id, bom_id).await?;
+        ensure_version(&metadata.summary, expected_version)?;
+
+        let row_index = analyze
+            .lines
+            .iter()
+            .map(|line| line.row_index)
+            .max()
+            .map(|max| max + 1)
+            .unwrap_or(0);
+        let line = new_analyzed_line(row_index, &input);
+        analyze.lines.push(line);
+        let line_index = analyze.lines.len() - 1;
+        finalize_analyze(&mut analyze);
+        bump_summary_after_edit(&mut metadata.summary, &analyze);
+        self.persist_bom(account_id, &metadata, &analyze).await?;
+
+        Ok(LineEditResult {
+            version: metadata.summary.version,
+            line_index,
+            line: analyze.lines[line_index].clone(),
+        })
+    }
+
+    async fn load_mutable(
+        &self,
+        account_id: &str,
+        bom_id: &str,
+    ) -> Result<(BomMetadata, AnalyzeResult), StoreError> {
+        let prefix = self.bom_prefix(account_id, bom_id);
+        let mut metadata = self
+            .read_json::<BomMetadata>(&format!("{prefix}/metadata.json"))
+            .await?;
+        metadata.summary = normalize_summary(metadata.summary);
+        let analyze = self
+            .read_json::<AnalyzeResult>(&format!("{prefix}/analyze.json"))
+            .await?;
+        Ok((metadata, analyze))
+    }
+
+    async fn persist_bom(
+        &self,
+        account_id: &str,
+        metadata: &BomMetadata,
+        analyze: &AnalyzeResult,
+    ) -> Result<(), StoreError> {
+        let prefix = self.bom_prefix(account_id, &metadata.summary.id);
+        self.write_json(&format!("{prefix}/analyze.json"), analyze)
+            .await?;
+        self.write_json(&format!("{prefix}/metadata.json"), metadata)
+            .await?;
+
+        let mut index = self.read_index(account_id).await?;
+        if let Some(existing) = index
+            .boms
+            .iter_mut()
+            .find(|item| item.id == metadata.summary.id)
+        {
+            *existing = metadata.summary.clone();
+        } else {
+            index.boms.push(metadata.summary.clone());
+        }
+        self.write_index(account_id, &index).await
     }
 
     async fn delete_prefix(&self, prefix: &str) -> Result<(), StoreError> {
@@ -299,6 +490,8 @@ impl BomStore {
                 Ok(())
             }
             StoreMode::S3 { client, bucket } => {
+                // Single PutObject of the full body — S3 object PUTs are atomic
+                // (readers never see a partial JSON object from a failed write).
                 let mut request = client
                     .put_object()
                     .bucket(bucket)
@@ -321,57 +514,175 @@ fn chrono_now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
+fn normalize_summary(mut summary: BomSummary) -> BomSummary {
+    if summary.version == 0 {
+        summary.version = 1;
+    }
+    if summary.updated_at.is_empty() {
+        summary.updated_at = summary.uploaded_at.clone();
+    }
+    summary
+}
+
+fn ensure_version(summary: &BomSummary, expected_version: u64) -> Result<(), StoreError> {
+    if summary.version != expected_version {
+        return Err(StoreError::Conflict);
+    }
+    Ok(())
+}
+
+fn bump_summary_after_edit(summary: &mut BomSummary, analyze: &AnalyzeResult) {
+    summary.version = summary.version.saturating_add(1);
+    summary.updated_at = chrono_now();
+    summary.line_count = analyze.summary.total;
+    summary.overall_risk_score = overall_risk_score(&analyze.summary);
+    summary.at_risk_count = at_risk_count(&analyze.summary);
+}
+
+fn apply_line_patch(line: &mut AnalyzedLine, patch: &LinePatch) {
+    if let Some(mpn) = &patch.mpn {
+        line.mpn = Some(mpn.clone());
+    }
+    if let Some(manufacturer) = &patch.manufacturer {
+        line.manufacturer = Some(manufacturer.clone());
+    }
+    if let Some(quantity) = patch.quantity {
+        line.quantity = Some(quantity);
+    }
+    if let Some(refdes) = &patch.refdes {
+        line.refdes = Some(refdes.clone());
+    }
+    if let Some(description) = &patch.description {
+        line.description = Some(description.clone());
+    }
+}
+
+fn new_analyzed_line(row_index: usize, input: &NewLineInput) -> AnalyzedLine {
+    AnalyzedLine {
+        row_index,
+        mpn: input.mpn.clone(),
+        manufacturer: input.manufacturer.clone(),
+        quantity: input.quantity,
+        refdes: input.refdes.clone(),
+        description: input.description.clone(),
+        aml_candidates: Vec::new(),
+        availability_status: "Pending".to_string(),
+        lifecycle_status: "Unknown".to_string(),
+        match_status: "Pending".to_string(),
+        factory_lead_days: None,
+        total_avail: 0,
+        risk_level: RiskLevel::Yellow,
+        category: None,
+        hts_code: None,
+        country_of_origin: None,
+        tariff_confidence: None,
+        base_duty_pct: None,
+        section_301_pct: None,
+        total_duty_pct: None,
+        tariff_notes: None,
+        rate_basis: None,
+        is_stale: None,
+        tariff_disclaimer: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analyze::{AnalyzeResult, AnalyzeSummary};
+    use crate::analyze::{AnalyzeResult, AnalyzeSummary, RiskLevel};
 
-    fn sample_analyze(id: &str) -> AnalyzeResult {
-        AnalyzeResult {
+    fn sample_line(row_index: usize, mpn: &str) -> AnalyzedLine {
+        AnalyzedLine {
+            row_index,
+            mpn: Some(mpn.to_string()),
+            manufacturer: Some("Murata".to_string()),
+            quantity: Some(1.0),
+            refdes: Some(format!("R{row_index}")),
+            description: Some("resistor".to_string()),
+            aml_candidates: Vec::new(),
+            availability_status: "InStock".to_string(),
+            lifecycle_status: "Active".to_string(),
+            match_status: "Exact".to_string(),
+            factory_lead_days: Some(14),
+            total_avail: 100,
+            risk_level: RiskLevel::Green,
+            category: None,
+            hts_code: None,
+            country_of_origin: None,
+            tariff_confidence: None,
+            base_duty_pct: None,
+            section_301_pct: None,
+            total_duty_pct: None,
+            tariff_notes: None,
+            rate_basis: None,
+            is_stale: None,
+            tariff_disclaimer: None,
+        }
+    }
+
+    fn sample_analyze(id: &str, lines: Vec<AnalyzedLine>) -> AnalyzeResult {
+        let mut analyze = AnalyzeResult {
             upload_id: id.to_string(),
             source_filename: "test.csv".to_string(),
             sheet_name: None,
             mapping_confidence: 0.9,
             summary: AnalyzeSummary {
-                total: 4,
-                in_stock: 2,
-                out_of_stock: 1,
-                eol_or_nrnd: 1,
+                total: lines.len(),
+                in_stock: 0,
+                out_of_stock: 0,
+                eol_or_nrnd: 0,
                 no_match: 0,
                 error_count: 0,
                 long_lead: 0,
-                red_count: 1,
-                yellow_count: 1,
-                green_count: 2,
+                red_count: 0,
+                yellow_count: 0,
+                green_count: 0,
             },
-            lines: Vec::new(),
+            lines,
             top_risks: Vec::new(),
             warnings: Vec::new(),
             stats: serde_json::json!({}),
-            analyzed_at: "0Z".to_string(),
-        }
+            analyzed_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        finalize_analyze(&mut analyze);
+        analyze
+    }
+
+    fn temp_store() -> (tempfile::TempDir, BomStore) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BomStore::local(temp.path().to_path_buf());
+        (temp, store)
+    }
+
+    async fn seed_bom(store: &BomStore, account: &str, bom_id: &str, lines: Vec<AnalyzedLine>) {
+        store
+            .create_bom(CreateBomInput {
+                account_id: account.to_string(),
+                email: Some("a@example.com".to_string()),
+                name: None,
+                filename: "test.csv".to_string(),
+                file_bytes: b"mpn,qty\nabc,1".to_vec(),
+                content_type: Some("text/csv".to_string()),
+                analyze: sample_analyze(bom_id, lines),
+            })
+            .await
+            .expect("create");
     }
 
     #[tokio::test]
     async fn local_store_is_account_scoped() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        std::env::set_var("BOM_STORAGE_PATH", temp.path());
-        std::env::remove_var("BOM_BUCKET_NAME");
-
-        let store = BomStore::from_env().await;
-        let input = CreateBomInput {
-            account_id: "account-a".to_string(),
-            email: Some("a@example.com".to_string()),
-            name: None,
-            filename: "test.csv".to_string(),
-            file_bytes: b"mpn,qty\nabc,1".to_vec(),
-            content_type: Some("text/csv".to_string()),
-            analyze: sample_analyze("bom-1"),
-        };
-        store.create_bom(input).await.expect("create");
+        let (_temp, store) = temp_store();
+        seed_bom(
+            &store,
+            "account-a",
+            "bom-1",
+            vec![sample_line(0, "ABC")],
+        )
+        .await;
 
         let listed = store.list_boms("account-a").await.expect("list");
         assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].version, 1);
         assert!(store.list_boms("account-b").await.unwrap().is_empty());
         assert!(store.get_bom("account-b", "bom-1").await.is_err());
 
@@ -380,8 +691,222 @@ mod tests {
             .await
             .expect("delete");
         assert!(store.list_boms("account-a").await.unwrap().is_empty());
+    }
 
-        std::env::remove_var("BOM_STORAGE_PATH");
+    #[tokio::test]
+    async fn put_replace_lines_persists_and_bumps_version() {
+        let (_temp, store) = temp_store();
+        seed_bom(
+            &store,
+            "account-a",
+            "bom-put",
+            vec![sample_line(0, "A"), sample_line(1, "B")],
+        )
+        .await;
+
+        let updated = store
+            .replace_lines(
+                "account-a",
+                "bom-put",
+                1,
+                vec![sample_line(0, "Z"), sample_line(1, "Y"), sample_line(2, "X")],
+            )
+            .await
+            .expect("replace");
+        assert_eq!(updated.summary.version, 2);
+        assert_eq!(updated.analyze.lines.len(), 3);
+        assert_eq!(updated.analyze.lines[0].mpn.as_deref(), Some("Z"));
+
+        let fetched = store.get_bom("account-a", "bom-put").await.expect("get");
+        assert_eq!(fetched.summary.version, 2);
+        assert_eq!(fetched.analyze.lines.len(), 3);
+        assert_eq!(fetched.analyze.lines[2].mpn.as_deref(), Some("X"));
+    }
+
+    #[tokio::test]
+    async fn patch_line_updates_only_that_line() {
+        let (_temp, store) = temp_store();
+        seed_bom(
+            &store,
+            "account-a",
+            "bom-patch",
+            vec![sample_line(0, "A"), sample_line(1, "B")],
+        )
+        .await;
+
+        let edited = store
+            .patch_line(
+                "account-a",
+                "bom-patch",
+                1,
+                1,
+                LinePatch {
+                    mpn: Some("B-NEW".to_string()),
+                    quantity: Some(42.0),
+                    ..LinePatch::default()
+                },
+            )
+            .await
+            .expect("patch");
+        assert_eq!(edited.version, 2);
+        assert_eq!(edited.line.mpn.as_deref(), Some("B-NEW"));
+        assert_eq!(edited.line.quantity, Some(42.0));
+
+        let fetched = store.get_bom("account-a", "bom-patch").await.expect("get");
+        assert_eq!(fetched.analyze.lines[0].mpn.as_deref(), Some("A"));
+        assert_eq!(fetched.analyze.lines[1].mpn.as_deref(), Some("B-NEW"));
+        assert_eq!(fetched.analyze.lines[1].manufacturer.as_deref(), Some("Murata"));
+    }
+
+    #[tokio::test]
+    async fn delete_line_shifts_subsequent_indices() {
+        let (_temp, store) = temp_store();
+        seed_bom(
+            &store,
+            "account-a",
+            "bom-del",
+            vec![
+                sample_line(10, "A"),
+                sample_line(20, "B"),
+                sample_line(30, "C"),
+            ],
+        )
+        .await;
+
+        let deleted = store
+            .delete_line("account-a", "bom-del", 1, 1)
+            .await
+            .expect("delete line");
+        assert_eq!(deleted.version, 2);
+        assert_eq!(deleted.line_count, 2);
+
+        let fetched = store.get_bom("account-a", "bom-del").await.expect("get");
+        assert_eq!(fetched.analyze.lines.len(), 2);
+        assert_eq!(fetched.analyze.lines[0].mpn.as_deref(), Some("A"));
+        assert_eq!(fetched.analyze.lines[1].mpn.as_deref(), Some("C"));
+        // Source row_index values are preserved; API vector indices shift.
+        assert_eq!(fetched.analyze.lines[1].row_index, 30);
+    }
+
+    #[tokio::test]
+    async fn add_line_appends_at_end() {
+        let (_temp, store) = temp_store();
+        seed_bom(
+            &store,
+            "account-a",
+            "bom-add",
+            vec![sample_line(0, "A")],
+        )
+        .await;
+
+        let added = store
+            .add_line(
+                "account-a",
+                "bom-add",
+                1,
+                NewLineInput {
+                    mpn: Some("NEW".to_string()),
+                    manufacturer: Some("TI".to_string()),
+                    quantity: Some(3.0),
+                    refdes: Some("U9".to_string()),
+                    description: Some("MCU".to_string()),
+                },
+            )
+            .await
+            .expect("add");
+        assert_eq!(added.version, 2);
+        assert_eq!(added.line_index, 1);
+        assert_eq!(added.line.mpn.as_deref(), Some("NEW"));
+
+        let fetched = store.get_bom("account-a", "bom-add").await.expect("get");
+        assert_eq!(fetched.analyze.lines.len(), 2);
+        assert_eq!(fetched.summary.line_count, 2);
+    }
+
+    #[tokio::test]
+    async fn stale_version_rejects_put_and_patch() {
+        let (_temp, store) = temp_store();
+        seed_bom(
+            &store,
+            "account-a",
+            "bom-conflict",
+            vec![sample_line(0, "A")],
+        )
+        .await;
+
+        store
+            .patch_line(
+                "account-a",
+                "bom-conflict",
+                0,
+                1,
+                LinePatch {
+                    mpn: Some("A2".to_string()),
+                    ..LinePatch::default()
+                },
+            )
+            .await
+            .expect("first edit");
+
+        let put_err = store
+            .replace_lines("account-a", "bom-conflict", 1, vec![sample_line(0, "Z")])
+            .await
+            .expect_err("stale put");
+        assert!(matches!(put_err, StoreError::Conflict));
+
+        let patch_err = store
+            .patch_line(
+                "account-a",
+                "bom-conflict",
+                0,
+                1,
+                LinePatch {
+                    mpn: Some("Z".to_string()),
+                    ..LinePatch::default()
+                },
+            )
+            .await
+            .expect_err("stale patch");
+        assert!(matches!(patch_err, StoreError::Conflict));
+
+        let fetched = store
+            .get_bom("account-a", "bom-conflict")
+            .await
+            .expect("get");
+        assert_eq!(fetched.summary.version, 2);
+        assert_eq!(fetched.analyze.lines[0].mpn.as_deref(), Some("A2"));
+    }
+
+    #[tokio::test]
+    async fn wrong_account_cannot_edit() {
+        let (_temp, store) = temp_store();
+        seed_bom(
+            &store,
+            "account-a",
+            "bom-owner",
+            vec![sample_line(0, "A")],
+        )
+        .await;
+
+        // Account-scoped storage: wrong owner sees NotFound (404), not a leaked 403.
+        let err = store
+            .patch_line(
+                "account-b",
+                "bom-owner",
+                0,
+                1,
+                LinePatch {
+                    mpn: Some("HACK".to_string()),
+                    ..LinePatch::default()
+                },
+            )
+            .await
+            .expect_err("wrong account");
+        assert!(matches!(err, StoreError::NotFound));
+
+        let fetched = store.get_bom("account-a", "bom-owner").await.expect("get");
+        assert_eq!(fetched.analyze.lines[0].mpn.as_deref(), Some("A"));
+        assert_eq!(fetched.summary.version, 1);
     }
 
     #[test]
