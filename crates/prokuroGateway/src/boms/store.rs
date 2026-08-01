@@ -909,6 +909,61 @@ mod tests {
         assert_eq!(fetched.summary.version, 1);
     }
 
+    #[tokio::test]
+    async fn write_failure_returns_store_write_error() {
+        let (temp, store) = temp_store();
+        seed_bom(
+            &store,
+            "account-a",
+            "bom-write-fail",
+            vec![sample_line(0, "A")],
+        )
+        .await;
+
+        // Make analyze.json read-only so persist fails after a successful read.
+        // Same failure class as a failed S3 PutObject (StoreError::Write).
+        let analyze_path = temp.path().join("account-a/bom-write-fail/analyze.json");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let readonly = std::fs::Permissions::from_mode(0o444);
+            std::fs::set_permissions(&analyze_path, readonly).expect("chmod file readonly");
+        }
+        #[cfg(not(unix))]
+        {
+            let mut perms = std::fs::metadata(&analyze_path)
+                .expect("metadata")
+                .permissions();
+            perms.set_readonly(true);
+            std::fs::set_permissions(&analyze_path, perms).expect("chmod file readonly");
+        }
+
+        let err = store
+            .patch_line(
+                "account-a",
+                "bom-write-fail",
+                0,
+                1,
+                LinePatch {
+                    mpn: Some("B".to_string()),
+                    ..LinePatch::default()
+                },
+            )
+            .await
+            .expect_err("write should fail");
+        assert!(
+            matches!(err, StoreError::Write(_)),
+            "expected Write, got {err:?}"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let writable = std::fs::Permissions::from_mode(0o644);
+            let _ = std::fs::set_permissions(&analyze_path, writable);
+        }
+    }
+
     #[test]
     fn uploaded_at_is_iso8601() {
         let value = chrono_now();
