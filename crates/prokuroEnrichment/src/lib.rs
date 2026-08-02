@@ -167,7 +167,10 @@ async fn enrich_lines(
                 Ok(part) => part_to_enrich(0, &part, EnrichSource::LiveMiss),
                 Err(error) => {
                     tracing::warn!(%pk, %error, "live enrich failed");
-                    let _ = state.store.enqueue_unresolved_many(&[pk.clone()]).await;
+                    let _ = state
+                        .store
+                        .enqueue_unresolved_many(std::slice::from_ref(pk))
+                        .await;
                     pending_result(0)
                 }
             };
