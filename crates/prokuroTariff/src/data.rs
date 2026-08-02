@@ -194,7 +194,7 @@ impl TariffData {
                 key.starts_with(&addon_key) || addon_key.starts_with(&key)
             })
             .collect();
-        matches.sort_by(|a, b| b.hts_code.len().cmp(&a.hts_code.len()));
+        matches.sort_by_key(|b| std::cmp::Reverse(b.hts_code.len()));
         matches.dedup_by(|a, b| a.program == b.program && a.ch99_subheading == b.ch99_subheading);
         matches
     }
