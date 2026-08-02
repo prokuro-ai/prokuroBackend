@@ -150,6 +150,17 @@ pub async fn authenticate(
         });
     }
 
+    // Local-only smoke: set PROKURO_LOCAL_AUTH_BYPASS=1 and use
+    // `Authorization: Bearer test:<account_id>`. Never enable in deployed envs.
+    if std::env::var("PROKURO_LOCAL_AUTH_BYPASS").ok().as_deref() == Some("1") {
+        if let Some(account_id) = local_bypass_account_id(headers) {
+            return Ok(AuthUser {
+                account_id,
+                email: None,
+            });
+        }
+    }
+
     let Some(auth) = auth else {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
@@ -166,6 +177,10 @@ pub async fn authenticate(
 /// Only compiled into the library test build — not present in release binaries.
 #[cfg(test)]
 fn test_account_id(headers: &HeaderMap) -> Option<String> {
+    local_bypass_account_id(headers)
+}
+
+fn local_bypass_account_id(headers: &HeaderMap) -> Option<String> {
     bearer_token(headers)
         .ok()
         .and_then(|token| token.strip_prefix("test:"))
