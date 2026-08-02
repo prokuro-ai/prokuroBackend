@@ -142,6 +142,14 @@ pub async fn authenticate(
     auth: Option<&Arc<AuthService>>,
     headers: &HeaderMap,
 ) -> Result<AuthUser, (StatusCode, String)> {
+    #[cfg(test)]
+    if let Some(account_id) = test_account_id(headers) {
+        return Ok(AuthUser {
+            account_id,
+            email: None,
+        });
+    }
+
     let Some(auth) = auth else {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
@@ -152,6 +160,16 @@ pub async fn authenticate(
     auth.authenticate(headers)
         .await
         .map_err(|error| (StatusCode::UNAUTHORIZED, error.to_string()))
+}
+
+/// Unit-test auth bypass: `Authorization: Bearer test:<account_id>`.
+/// Only compiled into the library test build — not present in release binaries.
+#[cfg(test)]
+fn test_account_id(headers: &HeaderMap) -> Option<String> {
+    bearer_token(headers)
+        .ok()
+        .and_then(|token| token.strip_prefix("test:"))
+        .map(str::to_string)
 }
 
 fn bearer_token(headers: &HeaderMap) -> Result<&str, AuthError> {

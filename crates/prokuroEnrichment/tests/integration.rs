@@ -4,7 +4,6 @@
 //! (uses default AWS credentials and PARTS_TABLE / UNRESOLVED_TABLE from CDK).
 
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::body::{to_bytes, Body};
@@ -46,11 +45,13 @@ async fn open_store() -> Option<PartStore> {
         eprintln!("skipping DynamoDB test: set RUN_DYNAMODB_TESTS=1 with AWS credentials");
         return None;
     }
-    let _guard = env_lock().lock().unwrap();
-    if std::env::var("AWS_REGION").is_err() {
-        // SAFETY: tests hold env_lock; single-threaded mutation for this crate's suite.
-        unsafe {
-            std::env::set_var("AWS_REGION", "us-west-2");
+    {
+        let _guard = env_lock().lock().unwrap();
+        if std::env::var("AWS_REGION").is_err() {
+            // SAFETY: tests hold env_lock; single-threaded mutation for this crate's suite.
+            unsafe {
+                std::env::set_var("AWS_REGION", "us-west-2");
+            }
         }
     }
     match PartStore::from_env().await {
@@ -406,13 +407,15 @@ async fn digikey_provider_returns_none_on_404() {
 
 #[tokio::test]
 async fn health_ok() {
-    let _guard = env_lock().lock().unwrap();
-    // SAFETY: tests hold env_lock.
-    unsafe {
-        std::env::set_var("AWS_REGION", "us-west-2");
-        let suffix = uuid::Uuid::new_v4().simple().to_string();
-        std::env::set_var("PARTS_TABLE", format!("unused-parts-{suffix}"));
-        std::env::set_var("UNRESOLVED_TABLE", format!("unused-unresolved-{suffix}"));
+    {
+        let _guard = env_lock().lock().unwrap();
+        // SAFETY: tests hold env_lock.
+        unsafe {
+            std::env::set_var("AWS_REGION", "us-west-2");
+            let suffix = uuid::Uuid::new_v4().simple().to_string();
+            std::env::set_var("PARTS_TABLE", format!("unused-parts-{suffix}"));
+            std::env::set_var("UNRESOLVED_TABLE", format!("unused-unresolved-{suffix}"));
+        }
     }
 
     let store = PartStore::from_env().await.expect("store client");

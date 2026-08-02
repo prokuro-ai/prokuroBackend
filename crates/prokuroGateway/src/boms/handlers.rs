@@ -2,19 +2,20 @@ use axum::extract::{Multipart, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use prokuro_types::pagination::{page_by_id, PageError, PageParams};
 
 use crate::analyze::{
-    apply_enrichment_results, finalize_analyze, AnalyzeResult,
+    apply_enrichment_results, finalize_analyze, AnalyzedLine, AnalyzeResult,
 };
 use crate::auth::authenticate;
 use crate::clients::enrichment::{EnrichInput, EnrichmentClient};
 use crate::state::AppState;
 
-use super::store::{CreateBomInput, StoreError};
+use super::observability::BOM_WRITE_FAILED_MARKER;
+use super::store::{CreateBomInput, LinePatch, NewLineInput, StoreError};
 use super::types::{bom_summary_fields, BomSummary};
 
 #[derive(Debug, Deserialize)]
@@ -266,10 +267,477 @@ pub async fn delete_bom(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct PutBomBody {
+    pub version: u64,
+    pub lines: Vec<AnalyzedLine>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PatchLineBody {
+    pub version: u64,
+    pub mpn: Option<String>,
+    pub manufacturer: Option<String>,
+    pub quantity: Option<f64>,
+    pub refdes: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddLineBody {
+    pub version: u64,
+    pub mpn: Option<String>,
+    pub manufacturer: Option<String>,
+    pub quantity: Option<f64>,
+    pub refdes: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VersionQuery {
+    pub version: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LineMutationResponse {
+    version: u64,
+    line_index: usize,
+    line: AnalyzedLine,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteLineResponse {
+    version: u64,
+    line_count: usize,
+}
+
+pub async fn put_bom(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(bom_id): Path<String>,
+    Json(body): Json<PutBomBody>,
+) -> impl IntoResponse {
+    let user = match authenticate(state.auth.as_ref(), &headers).await {
+        Ok(user) => user,
+        Err(response) => return response.into_response(),
+    };
+
+    match state
+        .bom_store
+        .replace_lines(&user.account_id, &bom_id, body.version, body.lines)
+        .await
+    {
+        Ok(record) => Json(record).into_response(),
+        Err(error) => {
+            mutation_error_response(&user.account_id, &bom_id, "put_bom", error).into_response()
+        }
+    }
+}
+
+pub async fn patch_line(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((bom_id, line_index)): Path<(String, usize)>,
+    Json(body): Json<PatchLineBody>,
+) -> impl IntoResponse {
+    let user = match authenticate(state.auth.as_ref(), &headers).await {
+        Ok(user) => user,
+        Err(response) => return response.into_response(),
+    };
+
+    let patch = LinePatch {
+        mpn: body.mpn,
+        manufacturer: body.manufacturer,
+        quantity: body.quantity,
+        refdes: body.refdes,
+        description: body.description,
+    };
+
+    match state
+        .bom_store
+        .patch_line(&user.account_id, &bom_id, line_index, body.version, patch)
+        .await
+    {
+        Ok(result) => Json(LineMutationResponse {
+            version: result.version,
+            line_index: result.line_index,
+            line: result.line,
+        })
+        .into_response(),
+        Err(error) => {
+            mutation_error_response(&user.account_id, &bom_id, "patch_line", error).into_response()
+        }
+    }
+}
+
+pub async fn delete_line(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((bom_id, line_index)): Path<(String, usize)>,
+    Query(query): Query<VersionQuery>,
+) -> impl IntoResponse {
+    let user = match authenticate(state.auth.as_ref(), &headers).await {
+        Ok(user) => user,
+        Err(response) => return response.into_response(),
+    };
+
+    match state
+        .bom_store
+        .delete_line(&user.account_id, &bom_id, line_index, query.version)
+        .await
+    {
+        Ok(result) => Json(DeleteLineResponse {
+            version: result.version,
+            line_count: result.line_count,
+        })
+        .into_response(),
+        Err(error) => {
+            mutation_error_response(&user.account_id, &bom_id, "delete_line", error).into_response()
+        }
+    }
+}
+
+pub async fn add_line(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(bom_id): Path<String>,
+    Json(body): Json<AddLineBody>,
+) -> impl IntoResponse {
+    let user = match authenticate(state.auth.as_ref(), &headers).await {
+        Ok(user) => user,
+        Err(response) => return response.into_response(),
+    };
+
+    let input = NewLineInput {
+        mpn: body.mpn,
+        manufacturer: body.manufacturer,
+        quantity: body.quantity,
+        refdes: body.refdes,
+        description: body.description,
+    };
+
+    match state
+        .bom_store
+        .add_line(&user.account_id, &bom_id, body.version, input)
+        .await
+    {
+        Ok(result) => (
+            StatusCode::CREATED,
+            Json(LineMutationResponse {
+                version: result.version,
+                line_index: result.line_index,
+                line: result.line,
+            }),
+        )
+            .into_response(),
+        Err(error) => {
+            mutation_error_response(&user.account_id, &bom_id, "add_line", error).into_response()
+        }
+    }
+}
+
+/// Maps store failures to distinct HTTP statuses and logs write failures with
+/// structured fields for CloudWatch (`bom_write_failed` is the alarm signal).
+fn mutation_error_response(
+    user_id: &str,
+    bom_id: &str,
+    operation: &'static str,
+    error: StoreError,
+) -> (StatusCode, Json<serde_json::Value>) {
+    match error {
+        StoreError::NotFound => {
+            tracing::warn!(user_id, bom_id, operation, "bom_write_not_found");
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "BOM not found" })),
+            )
+        }
+        StoreError::Conflict => {
+            tracing::warn!(user_id, bom_id, operation, "bom_write_conflict");
+            (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": "this BOM was updated elsewhere, refresh to see the latest"
+                })),
+            )
+        }
+        StoreError::LineNotFound => {
+            tracing::warn!(user_id, bom_id, operation, "bom_write_line_not_found");
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "line not found" })),
+            )
+        }
+        StoreError::Write(detail) => {
+            tracing::error!(
+                user_id,
+                bom_id,
+                operation,
+                error = %detail,
+                "{}",
+                BOM_WRITE_FAILED_MARKER
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": "failed to save BOM changes",
+                    "detail": detail,
+                })),
+            )
+        }
+        StoreError::Read(detail) => {
+            tracing::error!(
+                user_id,
+                bom_id,
+                operation,
+                error = %detail,
+                "{}",
+                BOM_WRITE_FAILED_MARKER
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": "failed to read BOM before save",
+                    "detail": detail,
+                })),
+            )
+        }
+    }
+}
+
 fn store_error_response(error: StoreError) -> (StatusCode, Json<serde_json::Value>) {
     tracing::error!(%error, "bom store error");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(json!({ "error": error.to_string() })),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+
+    use axum::body::{to_bytes, Body};
+    use axum::http::{Request, StatusCode};
+    use axum::Json;
+    use tower::ServiceExt;
+    use tracing_subscriber::fmt::MakeWriter;
+    use tracing_subscriber::prelude::*;
+
+    use super::mutation_error_response;
+    use crate::analyze::{finalize_analyze, AnalyzedLine, AnalyzeResult, AnalyzeSummary, RiskLevel};
+    use crate::boms::observability::BOM_WRITE_FAILED_MARKER;
+    use crate::boms::store::{BomStore, CreateBomInput, StoreError};
+    use crate::state::AppState;
+
+    #[derive(Clone, Default)]
+    struct TraceBuf(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for TraceBuf {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().expect("trace lock").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for TraceBuf {
+        type Writer = TraceBuf;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    fn sample_line(row_index: usize, mpn: &str) -> AnalyzedLine {
+        AnalyzedLine {
+            row_index,
+            mpn: Some(mpn.to_string()),
+            manufacturer: Some("Murata".to_string()),
+            quantity: Some(1.0),
+            refdes: Some(format!("R{row_index}")),
+            description: Some("resistor".to_string()),
+            aml_candidates: Vec::new(),
+            availability_status: "InStock".to_string(),
+            lifecycle_status: "Active".to_string(),
+            match_status: "Exact".to_string(),
+            factory_lead_days: Some(14),
+            total_avail: 100,
+            risk_level: RiskLevel::Green,
+            category: None,
+            hts_code: None,
+            country_of_origin: None,
+            tariff_confidence: None,
+            base_duty_pct: None,
+            section_301_pct: None,
+            total_duty_pct: None,
+            tariff_notes: None,
+            rate_basis: None,
+            is_stale: None,
+            tariff_disclaimer: None,
+        }
+    }
+
+    #[test]
+    fn write_failure_returns_500_with_clear_body() {
+        let (status, Json(body)) = mutation_error_response(
+            "user-1",
+            "bom-1",
+            "patch_line",
+            StoreError::Write("simulated s3 failure".into()),
+        );
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body["error"], "failed to save BOM changes");
+        assert_eq!(body["detail"], "simulated s3 failure");
+    }
+
+    #[test]
+    fn write_failure_logs_marker_and_structured_fields() {
+        let buf = TraceBuf::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(buf.clone())
+                .with_ansi(false)
+                .without_time(),
+        );
+
+        tracing::subscriber::with_default(subscriber, || {
+            let _ = mutation_error_response(
+                "user-1",
+                "bom-1",
+                "patch_line",
+                StoreError::Write("simulated s3 failure".into()),
+            );
+        });
+
+        let logged = String::from_utf8(buf.0.lock().expect("trace lock").clone())
+            .expect("utf8 log buffer");
+        assert!(
+            logged.contains(BOM_WRITE_FAILED_MARKER),
+            "log must contain alarm marker, got: {logged}"
+        );
+        assert!(logged.contains("user-1"), "log must contain user_id");
+        assert!(logged.contains("bom-1"), "log must contain bom_id");
+        assert!(logged.contains("patch_line"), "log must contain operation");
+        assert!(
+            logged.contains("simulated s3 failure"),
+            "log must contain underlying error"
+        );
+    }
+
+    #[test]
+    fn conflict_returns_409() {
+        let (status, Json(body)) = mutation_error_response(
+            "user-1",
+            "bom-1",
+            "put_bom",
+            StoreError::Conflict,
+        );
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body["error"].as_str().unwrap().contains("updated elsewhere"));
+    }
+
+    #[test]
+    fn not_found_returns_404() {
+        let (status, _) =
+            mutation_error_response("user-1", "bom-1", "delete_line", StoreError::NotFound);
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn patch_line_http_wires_auth_store_and_response() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BomStore::local(temp.path().to_path_buf());
+
+        let mut analyze = AnalyzeResult {
+            upload_id: "bom-wire".to_string(),
+            source_filename: "test.csv".to_string(),
+            sheet_name: None,
+            mapping_confidence: 0.9,
+            summary: AnalyzeSummary {
+                total: 1,
+                in_stock: 0,
+                out_of_stock: 0,
+                eol_or_nrnd: 0,
+                no_match: 0,
+                error_count: 0,
+                long_lead: 0,
+                red_count: 0,
+                yellow_count: 0,
+                green_count: 0,
+            },
+            lines: vec![sample_line(0, "A")],
+            top_risks: Vec::new(),
+            warnings: Vec::new(),
+            stats: serde_json::json!({}),
+            analyzed_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        finalize_analyze(&mut analyze);
+
+        store
+            .create_bom(CreateBomInput {
+                account_id: "account-a".to_string(),
+                email: None,
+                name: None,
+                filename: "test.csv".to_string(),
+                file_bytes: b"mpn,qty\nA,1".to_vec(),
+                content_type: Some("text/csv".to_string()),
+                analyze,
+            })
+            .await
+            .expect("seed");
+
+        let state = AppState {
+            // Cognito unset; unit-test auth bypass uses Bearer test:<account_id>.
+            auth: None,
+            bom_store: Arc::new(store),
+        };
+        let app = crate::app(state);
+
+        let request = Request::builder()
+            .method("PATCH")
+            .uri("/v1/boms/bom-wire/lines/0")
+            .header("authorization", "Bearer test:account-a")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"version":1,"mpn":"A-NEW","quantity":9.0}"#,
+            ))
+            .expect("request");
+
+        let response = app.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(json["version"], 2);
+        assert_eq!(json["line"]["mpn"], "A-NEW");
+        assert_eq!(json["line"]["quantity"], 9.0);
+    }
+
+    #[tokio::test]
+    async fn patch_line_http_rejects_missing_auth() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = AppState {
+            auth: None,
+            bom_store: Arc::new(BomStore::local(temp.path().to_path_buf())),
+        };
+        let app = crate::app(state);
+
+        let request = Request::builder()
+            .method("PATCH")
+            .uri("/v1/boms/bom-x/lines/0")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"version":1,"mpn":"Z"}"#))
+            .expect("request");
+
+        let response = app.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
 }

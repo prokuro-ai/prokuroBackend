@@ -5,13 +5,15 @@ use axum::body::Body;
 use axum::extract::Multipart;
 use axum::http::{header, Method, StatusCode};
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use serde_json::json;
 use tower_http::cors::{Any, CorsLayer};
 
 use analyze::{apply_tariff_results, finalize_analyze, merge, AnalyzeResult};
-use boms::handlers::{create_bom, delete_bom, get_bom, list_boms};
+use boms::handlers::{
+    add_line, create_bom, delete_bom, delete_line, get_bom, list_boms, patch_line, put_bom,
+};
 use clients::enrichment::{EnrichInput, EnrichmentClient};
 use clients::parser::ParserClient;
 use clients::tariff::{TariffClient, TariffInput};
@@ -45,6 +47,8 @@ pub fn app(state: AppState) -> Router {
         .allow_methods([
             Method::GET,
             Method::POST,
+            Method::PUT,
+            Method::PATCH,
             Method::DELETE,
             Method::OPTIONS,
         ])
@@ -55,7 +59,15 @@ pub fn app(state: AppState) -> Router {
         .route("/v1/parse", post(parse_handler))
         .route("/v1/analyze", post(analyze_handler))
         .route("/v1/boms", get(list_boms).post(create_bom))
-        .route("/v1/boms/{id}", get(get_bom).delete(delete_bom))
+        .route(
+            "/v1/boms/{id}",
+            get(get_bom).put(put_bom).delete(delete_bom),
+        )
+        .route("/v1/boms/{id}/lines", post(add_line))
+        .route(
+            "/v1/boms/{id}/lines/{line_index}",
+            patch(patch_line).delete(delete_line),
+        )
         .layer(cors)
         .with_state(state)
 }
