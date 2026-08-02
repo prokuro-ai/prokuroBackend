@@ -50,9 +50,7 @@ fn require_positive_usize(name: &str) -> Result<usize, ProviderError> {
         .parse()
         .map_err(|_| ProviderError::NotConfigured(format!("{name} must be a positive integer")))?;
     if value == 0 {
-        return Err(ProviderError::NotConfigured(format!(
-            "{name} must be >= 1"
-        )));
+        return Err(ProviderError::NotConfigured(format!("{name} must be >= 1")));
     }
     Ok(value)
 }

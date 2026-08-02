@@ -7,9 +7,7 @@ use serde_json::json;
 
 use prokuro_types::pagination::{page_by_id, PageError, PageParams};
 
-use crate::analyze::{
-    apply_enrichment_results, finalize_analyze, AnalyzedLine, AnalyzeResult,
-};
+use crate::analyze::{apply_enrichment_results, finalize_analyze, AnalyzeResult, AnalyzedLine};
 use crate::auth::authenticate;
 use crate::clients::enrichment::{EnrichInput, EnrichmentClient};
 use crate::state::AppState;
@@ -528,7 +526,9 @@ mod tests {
     use tracing_subscriber::prelude::*;
 
     use super::mutation_error_response;
-    use crate::analyze::{finalize_analyze, AnalyzedLine, AnalyzeResult, AnalyzeSummary, RiskLevel};
+    use crate::analyze::{
+        finalize_analyze, AnalyzeResult, AnalyzeSummary, AnalyzedLine, RiskLevel,
+    };
     use crate::boms::observability::BOM_WRITE_FAILED_MARKER;
     use crate::boms::store::{BomStore, CreateBomInput, StoreError};
     use crate::state::AppState;
@@ -581,6 +581,8 @@ mod tests {
             rate_basis: None,
             is_stale: None,
             tariff_disclaimer: None,
+            entity_list_match: None,
+            entity_list_notes: None,
         }
     }
 
@@ -616,8 +618,8 @@ mod tests {
             );
         });
 
-        let logged = String::from_utf8(buf.0.lock().expect("trace lock").clone())
-            .expect("utf8 log buffer");
+        let logged =
+            String::from_utf8(buf.0.lock().expect("trace lock").clone()).expect("utf8 log buffer");
         assert!(
             logged.contains(BOM_WRITE_FAILED_MARKER),
             "log must contain alarm marker, got: {logged}"
@@ -633,14 +635,13 @@ mod tests {
 
     #[test]
     fn conflict_returns_409() {
-        let (status, Json(body)) = mutation_error_response(
-            "user-1",
-            "bom-1",
-            "put_bom",
-            StoreError::Conflict,
-        );
+        let (status, Json(body)) =
+            mutation_error_response("user-1", "bom-1", "put_bom", StoreError::Conflict);
         assert_eq!(status, StatusCode::CONFLICT);
-        assert!(body["error"].as_str().unwrap().contains("updated elsewhere"));
+        assert!(body["error"]
+            .as_str()
+            .unwrap()
+            .contains("updated elsewhere"));
     }
 
     #[test]
@@ -671,6 +672,7 @@ mod tests {
                 red_count: 0,
                 yellow_count: 0,
                 green_count: 0,
+                unknown_count: 0,
             },
             lines: vec![sample_line(0, "A")],
             top_risks: Vec::new(),
@@ -705,9 +707,7 @@ mod tests {
             .uri("/v1/boms/bom-wire/lines/0")
             .header("authorization", "Bearer test:account-a")
             .header("content-type", "application/json")
-            .body(Body::from(
-                r#"{"version":1,"mpn":"A-NEW","quantity":9.0}"#,
-            ))
+            .body(Body::from(r#"{"version":1,"mpn":"A-NEW","quantity":9.0}"#))
             .expect("request");
 
         let response = app.oneshot(request).await.expect("response");

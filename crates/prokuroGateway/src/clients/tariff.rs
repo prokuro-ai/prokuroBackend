@@ -29,10 +29,7 @@ impl TariffClient {
             .map(Self::new)
     }
 
-    pub async fn classify(
-        &self,
-        lines: &[TariffInput],
-    ) -> Result<Vec<TariffResult>, GatewayError> {
+    pub async fn classify(&self, lines: &[TariffInput]) -> Result<Vec<TariffResult>, GatewayError> {
         let line_count = lines.len().max(1);
         let timeout_secs = (line_count as u64)
             .saturating_mul(1)

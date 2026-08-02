@@ -11,9 +11,7 @@ use std::env;
 use std::time::Duration;
 
 use aws_config::BehaviorVersion;
-use aws_sdk_dynamodb::types::{
-    AttributeValue, DeleteRequest, KeysAndAttributes, WriteRequest,
-};
+use aws_sdk_dynamodb::types::{AttributeValue, DeleteRequest, KeysAndAttributes, WriteRequest};
 use aws_sdk_dynamodb::Client;
 use chrono::{DateTime, SecondsFormat, Utc};
 use thiserror::Error;
@@ -88,13 +86,21 @@ impl PartStore {
     }
 
     /// Batch-read current snapshots. Keys missing from the map are cache misses.
-    pub async fn get_many(&self, pks: &[String]) -> Result<HashMap<String, PartResult>, StoreError> {
+    pub async fn get_many(
+        &self,
+        pks: &[String],
+    ) -> Result<HashMap<String, PartResult>, StoreError> {
         let mut out = HashMap::new();
         if pks.is_empty() {
             return Ok(out);
         }
 
-        let unique: Vec<String> = pks.iter().cloned().collect::<HashSet<_>>().into_iter().collect();
+        let unique: Vec<String> = pks
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
 
         for chunk in unique.chunks(BATCH_GET_CHUNK) {
             let mut pending_keys: Vec<HashMap<String, AttributeValue>> = chunk
@@ -257,7 +263,11 @@ impl PartStore {
         let now = Utc::now();
 
         loop {
-            let mut req = self.client.scan().table_name(&self.unresolved_table).limit(100);
+            let mut req = self
+                .client
+                .scan()
+                .table_name(&self.unresolved_table)
+                .limit(100);
             if let Some(key) = start_key {
                 req = req.set_exclusive_start_key(Some(key));
             }

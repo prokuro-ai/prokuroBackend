@@ -27,7 +27,12 @@ fn counter(name: &'static str, description: &'static str) -> Counter<u64> {
 }
 
 fn cache_hit() -> &'static Counter<u64> {
-    CACHE_HIT.get_or_init(|| counter("digikey.lookup.cache_hit", "Enrichment served from DynamoDB cache"))
+    CACHE_HIT.get_or_init(|| {
+        counter(
+            "digikey.lookup.cache_hit",
+            "Enrichment served from DynamoDB cache",
+        )
+    })
 }
 
 fn live_miss() -> &'static Counter<u64> {

@@ -277,9 +277,7 @@ fn is_unscored_line(line: &AnalyzedLine) -> bool {
     let availability = line.availability_status.to_ascii_lowercase();
     let match_status = line.match_status.to_ascii_lowercase();
 
-    availability == "pending"
-        || match_status == "pending"
-        || availability == "nomatch"
+    availability == "pending" || match_status == "pending" || availability == "nomatch"
 }
 
 pub fn score_risk(line: &AnalyzedLine) -> RiskLevel {
@@ -316,9 +314,7 @@ pub fn score_risk(line: &AnalyzedLine) -> RiskLevel {
 fn select_top_risks(lines: &[AnalyzedLine], limit: usize) -> Vec<AnalyzedLine> {
     let mut ranked: Vec<&AnalyzedLine> = lines
         .iter()
-        .filter(|line| {
-            matches!(line.risk_level, RiskLevel::Red | RiskLevel::Yellow)
-        })
+        .filter(|line| matches!(line.risk_level, RiskLevel::Red | RiskLevel::Yellow))
         .collect();
     ranked.sort_by(|a, b| {
         risk_priority(a.risk_level)
@@ -347,7 +343,7 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        AnalyzedLine, AnalyzeResult, AnalyzeSummary, RiskLevel, finalize_analyze, score_risk,
+        finalize_analyze, score_risk, AnalyzeResult, AnalyzeSummary, AnalyzedLine, RiskLevel,
     };
 
     fn healthy_line(row_index: usize) -> AnalyzedLine {

@@ -33,7 +33,11 @@ impl RateLimiter {
         let max_concurrency = require_usize("DIGIKEY_MAX_CONCURRENCY")?;
         let max_per_minute = require_usize("DIGIKEY_MAX_PER_MINUTE")?;
         let max_per_day = require_u32("DIGIKEY_MAX_PER_DAY")?;
-        Ok(Self::with_limits(max_concurrency, max_per_minute, max_per_day))
+        Ok(Self::with_limits(
+            max_concurrency,
+            max_per_minute,
+            max_per_day,
+        ))
     }
 
     pub fn with_limits(
@@ -153,9 +157,7 @@ fn require_usize(name: &str) -> Result<usize, ProviderError> {
         .parse()
         .map_err(|_| ProviderError::NotConfigured(format!("{name} must be a positive integer")))?;
     if value == 0 {
-        return Err(ProviderError::NotConfigured(format!(
-            "{name} must be >= 1"
-        )));
+        return Err(ProviderError::NotConfigured(format!("{name} must be >= 1")));
     }
     Ok(value)
 }
@@ -166,9 +168,7 @@ fn require_u32(name: &str) -> Result<u32, ProviderError> {
         .parse()
         .map_err(|_| ProviderError::NotConfigured(format!("{name} must be a positive integer")))?;
     if value == 0 {
-        return Err(ProviderError::NotConfigured(format!(
-            "{name} must be >= 1"
-        )));
+        return Err(ProviderError::NotConfigured(format!("{name} must be >= 1")));
     }
     Ok(value)
 }

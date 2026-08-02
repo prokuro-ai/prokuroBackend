@@ -64,7 +64,9 @@ impl ParserClient {
             form = form.text(
                 "column_mapping",
                 serde_json::to_string(&mapping).map_err(|error| {
-                    GatewayError::ParserError(format!("column_mapping serialization failed: {error}"))
+                    GatewayError::ParserError(format!(
+                        "column_mapping serialization failed: {error}"
+                    ))
                 })?,
             );
         }

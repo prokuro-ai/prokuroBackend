@@ -63,7 +63,11 @@ pub fn result_to_item(
             AttributeValue::N(result.total_avail.to_string()),
         ),
     ]);
-    put_opt_s(&mut item, "provider_part_id", result.provider_part_id.as_deref());
+    put_opt_s(
+        &mut item,
+        "provider_part_id",
+        result.provider_part_id.as_deref(),
+    );
     put_opt_s(&mut item, "matched_mpn", result.matched_mpn.as_deref());
     put_opt_s(
         &mut item,

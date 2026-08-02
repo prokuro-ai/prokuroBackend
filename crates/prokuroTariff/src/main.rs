@@ -1,4 +1,9 @@
-use std::{env, net::SocketAddr, process, sync::{Arc, RwLock}};
+use std::{
+    env,
+    net::SocketAddr,
+    process,
+    sync::{Arc, RwLock},
+};
 
 #[tokio::main]
 async fn main() {

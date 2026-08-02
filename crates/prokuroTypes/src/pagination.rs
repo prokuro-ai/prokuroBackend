@@ -1,5 +1,3 @@
-
-
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_LIMIT: u32 = 50;

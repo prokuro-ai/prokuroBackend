@@ -9,7 +9,7 @@ use tokio::net::TcpListener;
 use tower::ServiceExt;
 
 use prokuro_gateway::analyze::{
-    apply_tariff_results, finalize_analyze, AnalyzedLine, AnalyzeResult, AnalyzeSummary, RiskLevel,
+    apply_tariff_results, finalize_analyze, AnalyzeResult, AnalyzeSummary, AnalyzedLine, RiskLevel,
 };
 use prokuro_gateway::clients::tariff::{TariffClient, TariffInput};
 
@@ -149,7 +149,9 @@ async fn tariff_overlay_populates_analyzed_line_fields_from_mock_service() {
     );
 
     tokio::spawn(async move {
-        axum::serve(listener, mock).await.expect("mock tariff serve");
+        axum::serve(listener, mock)
+            .await
+            .expect("mock tariff serve");
     });
 
     // Ensure from_env path is exercised when TARIFF_URL is set (scoped lock, no await held).

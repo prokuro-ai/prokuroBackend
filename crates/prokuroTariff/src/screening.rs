@@ -61,7 +61,10 @@ mod tests {
 
     #[test]
     fn murata_does_not_match_huawei() {
-        assert_ne!(normalize_party_name("Murata"), normalize_party_name("Huawei"));
+        assert_ne!(
+            normalize_party_name("Murata"),
+            normalize_party_name("Huawei")
+        );
     }
 
     #[test]

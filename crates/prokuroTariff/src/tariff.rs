@@ -3,7 +3,7 @@
 use chrono::NaiveDate;
 use serde::Serialize;
 
-use crate::classify::{ClassificationConfidence, classify_component};
+use crate::classify::{classify_component, ClassificationConfidence};
 use crate::data::{EntityListEntry, TariffData};
 use crate::trade_programs::program_for_country;
 
@@ -89,10 +89,7 @@ fn assess_one(data: &TariffData, input: &TariffInput, today: NaiveDate) -> Tarif
             total_duty_pct: None,
             rate_basis: "unknown_origin".into(),
             estimated: true,
-            notes: merge_notes(
-                Some(NOTE_MANUAL_REVIEW.into()),
-                entity_list_notes.clone(),
-            ),
+            notes: merge_notes(Some(NOTE_MANUAL_REVIEW.into()), entity_list_notes.clone()),
             entity_list_match,
             entity_list_matched_name,
             entity_list_notes,
@@ -105,8 +102,12 @@ fn assess_one(data: &TariffData, input: &TariffInput, today: NaiveDate) -> Tarif
     let general_rate = data
         .find_hts_base(&hts_code)
         .map(|entry| entry.general_duty_rate_pct);
-    let (base_duty_pct, rate_basis) =
-        resolve_base_duty(data, &hts_code, input.country_of_origin.as_deref(), general_rate);
+    let (base_duty_pct, rate_basis) = resolve_base_duty(
+        data,
+        &hts_code,
+        input.country_of_origin.as_deref(),
+        general_rate,
+    );
 
     let section_301_entry = data.find_section_301_addon(&hts_code);
     let section_232_entry = data.find_section_232_addon(&hts_code);
@@ -180,10 +181,7 @@ fn entity_list_note(entry: &EntityListEntry) -> String {
         .federal_register_notice
         .as_deref()
         .unwrap_or("official BIS notice");
-    format!(
-        "BIS Entity List match: {} ({notice})",
-        entry.name
-    )
+    format!("BIS Entity List match: {} ({notice})", entry.name)
 }
 
 fn build_disclaimer(is_stale: bool, entity_list_match: bool) -> String {
@@ -213,7 +211,10 @@ fn resolve_base_duty(
     country_of_origin: Option<&str>,
     general_rate: Option<f64>,
 ) -> (Option<f64>, String) {
-    let Some(origin) = country_of_origin.map(str::trim).filter(|value| !value.is_empty()) else {
+    let Some(origin) = country_of_origin
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
         return (general_rate, "general".into());
     };
 
@@ -309,7 +310,7 @@ fn is_china_origin(country: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{TariffInput, assess_lines};
+    use super::{assess_lines, TariffInput};
     use crate::classify::ClassificationConfidence;
     use crate::data::{
         Chapter99Addon, DatasetMeta, EntityListEntry, HtsBaseEntry, Section301Exclusion, TariffData,
@@ -414,7 +415,10 @@ mod tests {
                 manufacturer: Some("Huawei".into()),
             }],
         );
-        assert_eq!(results[0].confidence, ClassificationConfidence::Unclassified);
+        assert_eq!(
+            results[0].confidence,
+            ClassificationConfidence::Unclassified
+        );
         assert!(results[0].entity_list_match);
     }
 }

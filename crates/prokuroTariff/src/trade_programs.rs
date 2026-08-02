@@ -26,12 +26,9 @@ pub fn program_for_country(country: &str) -> Option<&'static str> {
         "PE" | "PER" | "PERU" => Some("PE"),
         "SG" | "SGP" | "SINGAPORE" => Some("SG"),
         // DR-CAFTA — HTS Special letter "P"
-        "CR" | "CRI" | "COSTA RICA"
-        | "DO" | "DOM" | "DOMINICAN REPUBLIC"
-        | "GT" | "GTM" | "GUATEMALA"
-        | "HN" | "HND" | "HONDURAS"
-        | "NI" | "NIC" | "NICARAGUA"
-        | "SV" | "SLV" | "EL SALVADOR" => Some("P"),
+        "CR" | "CRI" | "COSTA RICA" | "DO" | "DOM" | "DOMINICAN REPUBLIC" | "GT" | "GTM"
+        | "GUATEMALA" | "HN" | "HND" | "HONDURAS" | "NI" | "NIC" | "NICARAGUA" | "SV" | "SLV"
+        | "EL SALVADOR" => Some("P"),
         _ => None,
     }
 }

@@ -11,9 +11,7 @@ use tokio::sync::RwLock;
 
 use super::dto::{Product, ProductDetailsResponse};
 use super::rate_limit::RateLimiter;
-use crate::types::{
-    PartQuery, PartResult, Provider, ProviderError, normalize_mpn,
-};
+use crate::types::{normalize_mpn, PartQuery, PartResult, Provider, ProviderError};
 use prokuro_types::enrichment::{AvailabilityStatus, LifecycleStatus, MatchStatus};
 
 const BASE_URL: &str = "https://api.digikey.com";
@@ -275,7 +273,6 @@ fn map_lifecycle(product: &Product) -> LifecycleStatus {
         LifecycleStatus::Unknown
     }
 }
-
 
 fn parse_lead_weeks(raw: &str) -> Option<i32> {
     let trimmed = raw.trim();

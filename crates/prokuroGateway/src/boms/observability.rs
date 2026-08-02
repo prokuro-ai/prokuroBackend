@@ -13,8 +13,7 @@ mod tests {
 
     #[test]
     fn marker_file_matches_constant() {
-        let from_file =
-            include_str!("../../observability/bom_write_failed_marker.txt").trim();
+        let from_file = include_str!("../../observability/bom_write_failed_marker.txt").trim();
         assert_eq!(
             from_file, BOM_WRITE_FAILED_MARKER,
             "marker file and Rust constant must stay identical"
@@ -40,9 +39,8 @@ mod tests {
             "CDK metric filter must use FilterPattern.literal(BOM_WRITE_FAILED_MARKER)"
         );
 
-        let observability_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
-            "../../../prokuroInfrastructureCDK/lib/observability.ts",
-        );
+        let observability_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../prokuroInfrastructureCDK/lib/observability.ts");
         let observability = std::fs::read_to_string(&observability_path).unwrap_or_else(|error| {
             panic!(
                 "failed to read CDK observability module at {}: {error}",

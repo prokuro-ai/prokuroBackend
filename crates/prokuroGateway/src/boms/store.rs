@@ -4,11 +4,9 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client as S3Client;
 use serde::{Deserialize, Serialize};
 
-use crate::analyze::{finalize_analyze, AnalyzedLine, AnalyzeResult, RiskLevel};
+use crate::analyze::{finalize_analyze, AnalyzeResult, AnalyzedLine, RiskLevel};
 
-use super::types::{
-    bom_summary_fields, default_bom_name, extension_for, BomRecord, BomSummary,
-};
+use super::types::{bom_summary_fields, default_bom_name, extension_for, BomRecord, BomSummary};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -562,8 +560,11 @@ fn bump_summary_after_edit(summary: &mut BomSummary, analyze: &AnalyzeResult) {
     summary.version = summary.version.saturating_add(1);
     summary.updated_at = chrono_now();
     summary.line_count = analyze.summary.total;
-    summary.overall_risk_score = overall_risk_score(&analyze.summary);
-    summary.at_risk_count = at_risk_count(&analyze.summary);
+    let (overall_risk_score, at_risk_count, unknown_count, risk_band) = bom_summary_fields(analyze);
+    summary.overall_risk_score = overall_risk_score;
+    summary.at_risk_count = at_risk_count;
+    summary.unknown_count = unknown_count;
+    summary.risk_band = risk_band;
 }
 
 fn apply_line_patch(line: &mut AnalyzedLine, patch: &LinePatch) {
@@ -610,6 +611,8 @@ fn new_analyzed_line(row_index: usize, input: &NewLineInput) -> AnalyzedLine {
         rate_basis: None,
         is_stale: None,
         tariff_disclaimer: None,
+        entity_list_match: None,
+        entity_list_notes: None,
     }
 }
 
@@ -644,6 +647,8 @@ mod tests {
             rate_basis: None,
             is_stale: None,
             tariff_disclaimer: None,
+            entity_list_match: None,
+            entity_list_notes: None,
         }
     }
 
@@ -700,13 +705,7 @@ mod tests {
     #[tokio::test]
     async fn local_store_is_account_scoped() {
         let (_temp, store) = temp_store();
-        seed_bom(
-            &store,
-            "account-a",
-            "bom-1",
-            vec![sample_line(0, "ABC")],
-        )
-        .await;
+        seed_bom(&store, "account-a", "bom-1", vec![sample_line(0, "ABC")]).await;
 
         let listed = store.list_boms("account-a").await.expect("list");
         assert_eq!(listed.len(), 1);
@@ -737,7 +736,11 @@ mod tests {
                 "account-a",
                 "bom-put",
                 1,
-                vec![sample_line(0, "Z"), sample_line(1, "Y"), sample_line(2, "X")],
+                vec![
+                    sample_line(0, "Z"),
+                    sample_line(1, "Y"),
+                    sample_line(2, "X"),
+                ],
             )
             .await
             .expect("replace");
@@ -783,7 +786,10 @@ mod tests {
         let fetched = store.get_bom("account-a", "bom-patch").await.expect("get");
         assert_eq!(fetched.analyze.lines[0].mpn.as_deref(), Some("A"));
         assert_eq!(fetched.analyze.lines[1].mpn.as_deref(), Some("B-NEW"));
-        assert_eq!(fetched.analyze.lines[1].manufacturer.as_deref(), Some("Murata"));
+        assert_eq!(
+            fetched.analyze.lines[1].manufacturer.as_deref(),
+            Some("Murata")
+        );
     }
 
     #[tokio::test]
@@ -819,13 +825,7 @@ mod tests {
     #[tokio::test]
     async fn add_line_appends_at_end() {
         let (_temp, store) = temp_store();
-        seed_bom(
-            &store,
-            "account-a",
-            "bom-add",
-            vec![sample_line(0, "A")],
-        )
-        .await;
+        seed_bom(&store, "account-a", "bom-add", vec![sample_line(0, "A")]).await;
 
         let added = store
             .add_line(
@@ -908,13 +908,7 @@ mod tests {
     #[tokio::test]
     async fn wrong_account_cannot_edit() {
         let (_temp, store) = temp_store();
-        seed_bom(
-            &store,
-            "account-a",
-            "bom-owner",
-            vec![sample_line(0, "A")],
-        )
-        .await;
+        seed_bom(&store, "account-a", "bom-owner", vec![sample_line(0, "A")]).await;
 
         // Account-scoped storage: wrong owner sees NotFound (404), not a leaked 403.
         let err = store

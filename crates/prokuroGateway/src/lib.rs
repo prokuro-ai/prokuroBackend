@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::Multipart;
@@ -81,7 +81,8 @@ async fn health() -> impl IntoResponse {
 
 async fn read_upload(
     mut multipart: Multipart,
-) -> Result<(String, Vec<u8>, Option<HashMap<String, String>>), (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(String, Vec<u8>, Option<HashMap<String, String>>), (StatusCode, Json<serde_json::Value>)>
+{
     let mut file_bytes: Option<Vec<u8>> = None;
     let mut filename = String::from("upload.csv");
     let mut column_mapping: Option<HashMap<String, String>> = None;
@@ -255,7 +256,9 @@ async fn analyze_upload(
     Ok(merged)
 }
 
-fn analyze_pipeline_error_response(error: AnalyzePipelineError) -> (StatusCode, Json<serde_json::Value>) {
+fn analyze_pipeline_error_response(
+    error: AnalyzePipelineError,
+) -> (StatusCode, Json<serde_json::Value>) {
     match error {
         AnalyzePipelineError::Parser(gateway_error) => parser_error_response(gateway_error),
         AnalyzePipelineError::LowMappingConfidence => (

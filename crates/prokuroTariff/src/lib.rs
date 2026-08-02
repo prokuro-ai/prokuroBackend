@@ -22,7 +22,7 @@ pub mod tariff;
 pub mod trade_programs;
 
 use data::TariffData;
-use tariff::{TariffInput, assess_lines};
+use tariff::{assess_lines, TariffInput};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -49,7 +49,9 @@ pub fn app(state: AppState) -> Router {
                     )
                 })
                 .on_response(
-                    |response: &axum::http::Response<_>, latency: Duration, _span: &tracing::Span| {
+                    |response: &axum::http::Response<_>,
+                     latency: Duration,
+                     _span: &tracing::Span| {
                         tracing::info!(
                             status = response.status().as_u16(),
                             latency_ms = latency.as_millis() as u64,

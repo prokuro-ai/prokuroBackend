@@ -1,6 +1,6 @@
 //! Unit tests for enrichment helpers (no DynamoDB / Digi-Key required).
 
-use prokuro_enrichment::types::{normalize_mpn, part_key, parse_part_key};
+use prokuro_enrichment::types::{normalize_mpn, parse_part_key, part_key};
 use prokuro_types::enrichment::{AvailabilityStatus, MatchStatus};
 
 #[test]

@@ -11,19 +11,90 @@ const LOW_CONFIDENCE_SURROUNDINGS_NOTE: &str =
 /// Tokens that look like electronics BOM vocabulary (units, packages, etc.).
 /// Used only for the surroundings sanity check — not for classification.
 const ELECTRONICS_DOMAIN_HINTS: &[&str] = &[
-    "ohm", "ohms", "farad", "farads", "henry", "henries", "volt", "volts", "amp", "amps",
-    "ampere", "amperes", "watt", "watts", "hz", "mhz", "ghz", "uf", "nf", "pf", "mv", "kv",
-    "ma", "ua", "smd", "tht", "smt", "dip", "sip", "sot", "soic", "qfn", "qfp", "bga", "tssop",
-    "msop", "dfn", "lga", "0402", "0603", "0805", "1206", "1210", "2512", "mfr", "mpn", "sku",
-    "qty", "refdes", "bom", "pcb", "ic", "led", "rgb", "arm", "cortex", "cell", "pack", "mm",
-    "awg", "vdc", "vac", "rms", "tol", "tolerance", "temp", "nch", "pch", "npn", "pnp",
+    "ohm",
+    "ohms",
+    "farad",
+    "farads",
+    "henry",
+    "henries",
+    "volt",
+    "volts",
+    "amp",
+    "amps",
+    "ampere",
+    "amperes",
+    "watt",
+    "watts",
+    "hz",
+    "mhz",
+    "ghz",
+    "uf",
+    "nf",
+    "pf",
+    "mv",
+    "kv",
+    "ma",
+    "ua",
+    "smd",
+    "tht",
+    "smt",
+    "dip",
+    "sip",
+    "sot",
+    "soic",
+    "qfn",
+    "qfp",
+    "bga",
+    "tssop",
+    "msop",
+    "dfn",
+    "lga",
+    "0402",
+    "0603",
+    "0805",
+    "1206",
+    "1210",
+    "2512",
+    "mfr",
+    "mpn",
+    "sku",
+    "qty",
+    "refdes",
+    "bom",
+    "pcb",
+    "ic",
+    "led",
+    "rgb",
+    "arm",
+    "cortex",
+    "cell",
+    "pack",
+    "mm",
+    "awg",
+    "vdc",
+    "vac",
+    "rms",
+    "tol",
+    "tolerance",
+    "temp",
+    "nch",
+    "pch",
+    "npn",
+    "pnp",
 ];
 
 /// Ordered most-specific-first. First match wins.
 const KEYWORD_RULES: &[KeywordRule] = &[
     // Batteries — lithium-ion before generic lithium/battery
     KeywordRule {
-        terms: &["li-ion", "li ion", "lithium-ion", "lithium ion", "lipo", "li-po"],
+        terms: &[
+            "li-ion",
+            "li ion",
+            "lithium-ion",
+            "lithium ion",
+            "lipo",
+            "li-po",
+        ],
         hts_code: "8507.60.00",
         label: "lithium-ion battery",
         confidence: ClassificationConfidence::High,
@@ -411,9 +482,7 @@ pub fn keyword_hts_codes() -> Vec<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ClassificationConfidence, LOW_CONFIDENCE_SURROUNDINGS_NOTE, classify_component,
-    };
+    use super::{classify_component, ClassificationConfidence, LOW_CONFIDENCE_SURROUNDINGS_NOTE};
 
     #[test]
     fn ceramic_capacitor_description_classifies_high() {

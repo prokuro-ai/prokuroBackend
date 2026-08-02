@@ -169,9 +169,9 @@ impl TariffData {
                 return Some(entry);
             }
         }
-        self.hts_base
-            .iter()
-            .find(|entry| hts_code.starts_with(&entry.hts_code) || entry.hts_code.starts_with(hts_code))
+        self.hts_base.iter().find(|entry| {
+            hts_code.starts_with(&entry.hts_code) || entry.hts_code.starts_with(hts_code)
+        })
     }
 
     pub fn find_special_rate(&self, hts_code: &str, program: &str) -> Option<f64> {
@@ -285,8 +285,8 @@ fn index_entity_name(
 }
 
 fn status_for(name: &str, meta: &DatasetMeta, today: NaiveDate) -> DatasetStatus {
-    let published = NaiveDate::parse_from_str(&meta.published_at[..10], "%Y-%m-%d")
-        .unwrap_or(today);
+    let published =
+        NaiveDate::parse_from_str(&meta.published_at[..10], "%Y-%m-%d").unwrap_or(today);
     DatasetStatus {
         name: name.to_string(),
         meta: meta.clone(),
@@ -339,8 +339,7 @@ async fn load_s3_snapshot<T: for<'de> Deserialize<'de>>(
 #[cfg(test)]
 mod tests {
     use super::{
-        Chapter99Addon, DatasetMeta, EntityListEntry, HtsBaseEntry, SnapshotFile,
-        TariffData,
+        Chapter99Addon, DatasetMeta, EntityListEntry, HtsBaseEntry, SnapshotFile, TariffData,
     };
 
     fn sample_data() -> TariffData {
