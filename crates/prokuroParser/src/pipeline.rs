@@ -195,7 +195,7 @@ mod tests {
 
     use crate::map::WarningCode;
 
-    use super::parse_file;
+    use super::{parse_file, parse_file_with_mapping};
 
     fn corpus(filename: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
