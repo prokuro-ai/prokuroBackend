@@ -19,7 +19,7 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex as AsyncMutex;
 use tower::ServiceExt;
 
-use prokuro_enrichment::providers::DigiKeyProvider;
+use prokuro_enrichment::providers::{DigiKeyProvider, RateLimiter};
 use prokuro_enrichment::store::PartStore;
 use prokuro_enrichment::sync;
 use prokuro_enrichment::types::{part_key, PartQuery, PartResult, Provider, ProviderError};
@@ -340,7 +340,12 @@ async fn digikey_provider_maps_mock_product_details() {
         axum::serve(listener, mock).await.ok();
     });
 
-    let provider = DigiKeyProvider::new("id".into(), "secret".into(), base);
+    let provider = DigiKeyProvider::new(
+        "id".into(),
+        "secret".into(),
+        base,
+        RateLimiter::with_limits(1, 120, 1000),
+    );
     let found = provider
         .lookup(&PartQuery {
             mpn: "GRM155R71C104KA88D".into(),
@@ -383,7 +388,12 @@ async fn digikey_provider_returns_none_on_404() {
         axum::serve(listener, mock).await.ok();
     });
 
-    let provider = DigiKeyProvider::new("id".into(), "secret".into(), base);
+    let provider = DigiKeyProvider::new(
+        "id".into(),
+        "secret".into(),
+        base,
+        RateLimiter::with_limits(1, 120, 1000),
+    );
     let found = provider
         .lookup(&PartQuery {
             mpn: "NOSUCH".into(),

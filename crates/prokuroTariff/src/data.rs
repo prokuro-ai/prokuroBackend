@@ -1,146 +1,181 @@
-//! Official tariff data loaders (USITC HTS + USTR Section 301).
-//!
-//! Bad data must fail startup — never silently serve invented rates.
-//! Freshness is human-reviewed on a cadence; this module makes staleness visible.
+//! Trade dataset loaders from S3
 
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-const HTS_ELECTRONICS_RAW: &str = include_str!("../data/hts_electronics.json");
-const SECTION_301_RAW: &str = include_str!("../data/section_301.json");
-
-const HTS_FILE: &str = "hts_electronics.json";
-const SECTION_301_FILE: &str = "section_301.json";
+use crate::screening::normalize_party_name;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-pub struct DataMeta {
-    pub retrieved_at: NaiveDate,
-    pub source_url: String,
-    pub reviewed_by: String,
-    pub next_review_due: NaiveDate,
+pub struct DatasetMeta {
+    pub published_at: String,
+    pub source: String,
+    #[serde(default)]
+    pub source_revision: Option<String>,
+    pub entry_count: usize,
+    pub version: u64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct DataFile<T> {
-    meta: DataMeta,
-    entries: Vec<T>,
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct SnapshotFile<T> {
+    pub(crate) meta: DatasetMeta,
+    pub(crate) entries: Vec<T>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct SpecialRateProgram {
     pub rate_pct: f64,
     pub programs: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct HtsEntry {
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct HtsBaseEntry {
     pub hts_code: String,
-    pub description: String,
     pub general_duty_rate_pct: f64,
-    pub source: String,
-    pub hts_revision: String,
-    /// Column 1 Special rates when present in the USITC extract. Absent when Special is blank.
     #[serde(default)]
     pub special_rate_programs: Vec<SpecialRateProgram>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct Section301Entry {
-    pub hts_prefix: String,
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Chapter99Addon {
+    pub hts_code: String,
+    pub program: String,
     pub additional_rate_pct: f64,
-    pub list: String,
-    pub source: String,
-    pub retrieved: String,
+    pub ch99_subheading: String,
+    #[serde(default)]
+    pub list: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Section301Exclusion {
+    pub hts_code: String,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct EntityListEntry {
+    pub entity_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub alt_names: Vec<String>,
+    #[serde(default)]
+    pub federal_register_notice: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DatasetStatus {
+    pub name: String,
+    pub meta: DatasetMeta,
+    pub age_days: i64,
 }
 
 #[derive(Debug, Clone)]
 pub struct TariffData {
-    pub hts: Vec<HtsEntry>,
-    pub section_301: Vec<Section301Entry>,
-    pub hts_revision: String,
-    pub section_301_retrieved: String,
-    pub hts_meta: DataMeta,
-    pub section_301_meta: DataMeta,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct FileDataStatus {
-    pub meta: DataMeta,
-    pub age_days: i64,
-    pub is_stale: bool,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct DataStatus {
-    pub hts_electronics: FileDataStatus,
-    pub section_301: FileDataStatus,
-    pub is_stale: bool,
+    pub hts_base: Vec<HtsBaseEntry>,
+    pub addons: Vec<Chapter99Addon>,
+    pub exclusions: Vec<Section301Exclusion>,
+    pub entity_list: Vec<EntityListEntry>,
+    pub hts_meta: DatasetMeta,
+    pub addons_meta: DatasetMeta,
+    pub exclusions_meta: DatasetMeta,
+    pub entity_list_meta: DatasetMeta,
+    hts_by_code: HashMap<String, HtsBaseEntry>,
+    entity_by_normalized_name: HashMap<String, EntityListEntry>,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum DataError {
-    #[error("failed to parse hts_electronics.json: {0}")]
-    HtsParse(serde_json::Error),
-    #[error("failed to parse section_301.json: {0}")]
-    Section301Parse(serde_json::Error),
-    #[error("hts_electronics.json is empty")]
-    HtsEmpty,
-    #[error("section_301.json is empty")]
-    Section301Empty,
-}
-
-/// Strip `//` line comments so curated JSON files can carry source provenance headers.
-fn strip_line_comments(raw: &str) -> String {
-    raw.lines()
-        .filter(|line| !line.trim_start().starts_with("//"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn age_days(retrieved_at: NaiveDate, today: NaiveDate) -> i64 {
-    (today - retrieved_at).num_days()
-}
-
-fn is_file_stale(meta: &DataMeta, today: NaiveDate) -> bool {
-    today > meta.next_review_due
+    #[error("failed to parse {0}: {1}")]
+    Parse(String, serde_json::Error),
+    #[error("{0} is empty")]
+    Empty(String),
+    #[error("S3 load failed: {0}")]
+    S3(String),
+    #[error("TRADE_DATA_BUCKET is required")]
+    MissingBucket,
 }
 
 impl TariffData {
-    pub fn load() -> Result<Self, DataError> {
-        let hts_file: DataFile<HtsEntry> =
-            serde_json::from_str(&strip_line_comments(HTS_ELECTRONICS_RAW))
-                .map_err(DataError::HtsParse)?;
-        if hts_file.entries.is_empty() {
-            return Err(DataError::HtsEmpty);
+    pub async fn load() -> Result<Self, DataError> {
+        let bucket = std::env::var("TRADE_DATA_BUCKET").map_err(|_| DataError::MissingBucket)?;
+        if bucket.trim().is_empty() {
+            return Err(DataError::MissingBucket);
+        }
+        Self::load_from_s3(&bucket).await
+    }
+
+    pub async fn load_from_s3(bucket: &str) -> Result<Self, DataError> {
+        let hts = load_s3_snapshot::<HtsBaseEntry>(bucket, "hts_base").await?;
+        let addons = load_s3_snapshot::<Chapter99Addon>(bucket, "chapter99_addons").await?;
+        let exclusions =
+            load_s3_snapshot::<Section301Exclusion>(bucket, "section301_exclusions").await?;
+        let entity_list = load_s3_snapshot::<EntityListEntry>(bucket, "entity_list").await?;
+        Self::from_parts(hts, addons, exclusions, entity_list)
+    }
+
+    pub(crate) fn from_parts(
+        hts: SnapshotFile<HtsBaseEntry>,
+        addons: SnapshotFile<Chapter99Addon>,
+        exclusions: SnapshotFile<Section301Exclusion>,
+        entity_list: SnapshotFile<EntityListEntry>,
+    ) -> Result<Self, DataError> {
+        if hts.entries.is_empty() {
+            return Err(DataError::Empty("hts_base".into()));
+        }
+        if addons.entries.is_empty() {
+            return Err(DataError::Empty("chapter99_addons".into()));
+        }
+        if entity_list.entries.is_empty() {
+            return Err(DataError::Empty("entity_list".into()));
         }
 
-        let section_file: DataFile<Section301Entry> =
-            serde_json::from_str(&strip_line_comments(SECTION_301_RAW))
-                .map_err(DataError::Section301Parse)?;
-        if section_file.entries.is_empty() {
-            return Err(DataError::Section301Empty);
+        let mut hts_by_code = HashMap::new();
+        for entry in &hts.entries {
+            hts_by_code.insert(normalize_hts_key(&entry.hts_code), entry.clone());
         }
 
-        let hts_revision = hts_file.entries[0].hts_revision.clone();
-        let section_301_retrieved = section_file.entries[0].retrieved.clone();
+        let mut entity_by_normalized_name = HashMap::new();
+        for entry in &entity_list.entries {
+            index_entity_name(&mut entity_by_normalized_name, &entry.name, entry.clone());
+            for alt_name in &entry.alt_names {
+                index_entity_name(&mut entity_by_normalized_name, alt_name, entry.clone());
+            }
+        }
 
         Ok(Self {
-            hts: hts_file.entries,
-            section_301: section_file.entries,
-            hts_revision,
-            section_301_retrieved,
-            hts_meta: hts_file.meta,
-            section_301_meta: section_file.meta,
+            hts_meta: hts.meta,
+            addons_meta: addons.meta,
+            exclusions_meta: exclusions.meta,
+            entity_list_meta: entity_list.meta,
+            hts_base: hts.entries,
+            addons: addons.entries,
+            exclusions: exclusions.entries,
+            entity_list: entity_list.entries,
+            hts_by_code,
+            entity_by_normalized_name,
         })
     }
 
-    pub fn find_hts(&self, hts_code: &str) -> Option<&HtsEntry> {
-        self.hts.iter().find(|entry| entry.hts_code == hts_code)
+    pub fn find_hts_base(&self, hts_code: &str) -> Option<&HtsBaseEntry> {
+        let key = normalize_hts_key(hts_code);
+        if let Some(entry) = self.hts_by_code.get(&key) {
+            return Some(entry);
+        }
+        for len in (4..=key.len()).rev() {
+            let prefix = &key[..len];
+            if let Some(entry) = self.hts_by_code.get(prefix) {
+                return Some(entry);
+            }
+        }
+        self.hts_base
+            .iter()
+            .find(|entry| hts_code.starts_with(&entry.hts_code) || entry.hts_code.starts_with(hts_code))
     }
 
-    /// Returns the Special rate when the HTS entry lists `program`.
     pub fn find_special_rate(&self, hts_code: &str, program: &str) -> Option<f64> {
-        let entry = self.find_hts(hts_code)?;
+        let entry = self.find_hts_base(hts_code)?;
         for special in &entry.special_rate_programs {
             if special.programs.iter().any(|listed| listed == program) {
                 return Some(special.rate_pct);
@@ -149,127 +184,225 @@ impl TariffData {
         None
     }
 
-    /// Longest matching prefix wins (e.g. `8507.60` before `8507`).
-    pub fn find_section_301(&self, hts_code: &str) -> Option<&Section301Entry> {
-        let mut best: Option<&Section301Entry> = None;
-        for entry in &self.section_301 {
-            if hts_code.starts_with(&entry.hts_prefix)
-                && best.is_none_or(|current| entry.hts_prefix.len() > current.hts_prefix.len())
-            {
-                best = Some(entry);
+    pub fn find_addons(&self, hts_code: &str) -> Vec<&Chapter99Addon> {
+        let key = normalize_hts_key(hts_code);
+        let mut matches: Vec<&Chapter99Addon> = self
+            .addons
+            .iter()
+            .filter(|addon| {
+                let addon_key = normalize_hts_key(&addon.hts_code);
+                key.starts_with(&addon_key) || addon_key.starts_with(&key)
+            })
+            .collect();
+        matches.sort_by(|a, b| b.hts_code.len().cmp(&a.hts_code.len()));
+        matches.dedup_by(|a, b| a.program == b.program && a.ch99_subheading == b.ch99_subheading);
+        matches
+    }
+
+    pub fn find_section_301_addon(&self, hts_code: &str) -> Option<&Chapter99Addon> {
+        self.find_addons(hts_code)
+            .into_iter()
+            .find(|addon| addon.program == "section_301")
+    }
+
+    pub fn find_section_232_addon(&self, hts_code: &str) -> Option<&Chapter99Addon> {
+        self.find_addons(hts_code)
+            .into_iter()
+            .find(|addon| addon.program == "section_232_semiconductor")
+    }
+
+    pub fn find_exclusion(&self, hts_code: &str, as_of: NaiveDate) -> Option<&Section301Exclusion> {
+        let key = normalize_hts_key(hts_code);
+        self.exclusions.iter().find(|entry| {
+            if entry.status != "active" {
+                return false;
             }
+            if !hts_codes_match(&key, &entry.hts_code) {
+                return false;
+            }
+            if let Some(expires) = &entry.expires_at {
+                if let Ok(date) = NaiveDate::parse_from_str(expires, "%Y-%m-%d") {
+                    return date >= as_of;
+                }
+            }
+            true
+        })
+    }
+
+    pub fn find_entity_list_match(&self, manufacturer: &str) -> Option<&EntityListEntry> {
+        let key = normalize_party_name(manufacturer);
+        if key.is_empty() {
+            return None;
         }
-        best
+        self.entity_by_normalized_name.get(&key)
     }
 
-    pub fn hts_data_age_days(&self, today: NaiveDate) -> i64 {
-        age_days(self.hts_meta.retrieved_at, today)
-    }
-
-    pub fn section_301_data_age_days(&self, today: NaiveDate) -> i64 {
-        age_days(self.section_301_meta.retrieved_at, today)
+    pub fn dataset_statuses(&self, today: NaiveDate) -> Vec<DatasetStatus> {
+        vec![
+            status_for("hts_base", &self.hts_meta, today),
+            status_for("chapter99_addons", &self.addons_meta, today),
+            status_for("section301_exclusions", &self.exclusions_meta, today),
+            status_for("entity_list", &self.entity_list_meta, today),
+        ]
     }
 
     pub fn is_stale(&self, today: NaiveDate) -> bool {
-        is_file_stale(&self.hts_meta, today) || is_file_stale(&self.section_301_meta, today)
+        self.dataset_statuses(today)
+            .iter()
+            .any(|status| status.age_days > 2)
     }
 
-    /// Human-readable WARN messages for files past `next_review_due`. Empty when fresh.
-    pub fn stale_file_warnings(&self, today: NaiveDate) -> Vec<String> {
-        let mut warnings = Vec::new();
-        if is_file_stale(&self.hts_meta, today) {
-            warnings.push(format!(
-                "Tariff data stale: {HTS_FILE} review was due {}, last human-reviewed {}. Verify against USITC before continuing to serve.",
-                self.hts_meta.next_review_due, self.hts_meta.retrieved_at
-            ));
-        }
-        if is_file_stale(&self.section_301_meta, today) {
-            warnings.push(format!(
-                "Tariff data stale: {SECTION_301_FILE} review was due {}, last human-reviewed {}. Verify against USTR before continuing to serve.",
-                self.section_301_meta.next_review_due, self.section_301_meta.retrieved_at
-            ));
-        }
-        warnings
+    pub fn hts_revision(&self) -> String {
+        self.hts_meta
+            .source_revision
+            .clone()
+            .unwrap_or_else(|| self.hts_meta.published_at.clone())
     }
 
-    /// Loud structured WARN logs when either curated file is past its review date.
-    /// Service still starts — stale data with a warning beats no data.
     pub fn log_staleness_warnings(&self, today: NaiveDate) {
-        for message in self.stale_file_warnings(today) {
-            tracing::warn!(%message, "tariff_data_stale");
-        }
-    }
-
-    pub fn data_status(&self, today: NaiveDate) -> DataStatus {
-        let hts_electronics = FileDataStatus {
-            meta: self.hts_meta.clone(),
-            age_days: self.hts_data_age_days(today),
-            is_stale: is_file_stale(&self.hts_meta, today),
-        };
-        let section_301 = FileDataStatus {
-            meta: self.section_301_meta.clone(),
-            age_days: self.section_301_data_age_days(today),
-            is_stale: is_file_stale(&self.section_301_meta, today),
-        };
-        let is_stale = hts_electronics.is_stale || section_301.is_stale;
-        DataStatus {
-            hts_electronics,
-            section_301,
-            is_stale,
+        for status in self.dataset_statuses(today) {
+            if status.age_days > 2 {
+                tracing::warn!(
+                    dataset = status.name,
+                    age_days = status.age_days,
+                    version = status.meta.version,
+                    "tariff dataset may be stale"
+                );
+            }
         }
     }
 }
 
+fn index_entity_name(
+    index: &mut HashMap<String, EntityListEntry>,
+    name: &str,
+    entry: EntityListEntry,
+) {
+    let key = normalize_party_name(name);
+    if !key.is_empty() {
+        index.entry(key).or_insert(entry);
+    }
+}
+
+fn status_for(name: &str, meta: &DatasetMeta, today: NaiveDate) -> DatasetStatus {
+    let published = NaiveDate::parse_from_str(&meta.published_at[..10], "%Y-%m-%d")
+        .unwrap_or(today);
+    DatasetStatus {
+        name: name.to_string(),
+        meta: meta.clone(),
+        age_days: (today - published).num_days(),
+    }
+}
+
+fn normalize_hts_key(code: &str) -> String {
+    code.chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect::<String>()
+}
+
+fn hts_codes_match(left: &str, right: &str) -> bool {
+    let right = normalize_hts_key(right);
+    left.starts_with(&right) || right.starts_with(left)
+}
+
+fn parse_snapshot<T: for<'de> Deserialize<'de>>(
+    raw: &str,
+    dataset: &str,
+) -> Result<SnapshotFile<T>, DataError> {
+    serde_json::from_str(raw).map_err(|error| DataError::Parse(dataset.to_string(), error))
+}
+
+async fn load_s3_snapshot<T: for<'de> Deserialize<'de>>(
+    bucket: &str,
+    prefix: &str,
+) -> Result<SnapshotFile<T>, DataError> {
+    let key = format!("{prefix}/current.json");
+    let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let client = aws_sdk_s3::Client::new(&config);
+    let response = client
+        .get_object()
+        .bucket(bucket)
+        .key(&key)
+        .send()
+        .await
+        .map_err(|error| DataError::S3(format!("get s3://{bucket}/{key}: {error}")))?;
+    let bytes = response
+        .body
+        .collect()
+        .await
+        .map_err(|error| DataError::S3(error.to_string()))?;
+    let raw = String::from_utf8(bytes.into_bytes().to_vec())
+        .map_err(|error| DataError::S3(error.to_string()))?;
+    parse_snapshot(&raw, prefix)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::TariffData;
-    use chrono::NaiveDate;
+    use super::{
+        Chapter99Addon, DatasetMeta, EntityListEntry, HtsBaseEntry, SnapshotFile,
+        TariffData,
+    };
 
-    fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).expect("valid date")
+    fn sample_data() -> TariffData {
+        let entity = EntityListEntry {
+            entity_id: "el-1".into(),
+            name: "Huawei Technologies Co., Ltd.".into(),
+            alt_names: vec!["Huawei".into()],
+            federal_register_notice: Some("85 FR 00000".into()),
+        };
+        TariffData::from_parts(
+            SnapshotFile {
+                meta: meta("hts_base"),
+                entries: vec![HtsBaseEntry {
+                    hts_code: "8532.24.00".into(),
+                    general_duty_rate_pct: 0.0,
+                    special_rate_programs: vec![],
+                }],
+            },
+            SnapshotFile {
+                meta: meta("chapter99_addons"),
+                entries: vec![Chapter99Addon {
+                    hts_code: "8532".into(),
+                    program: "section_301".into(),
+                    additional_rate_pct: 25.0,
+                    ch99_subheading: "9903.88.01".into(),
+                    list: None,
+                }],
+            },
+            SnapshotFile {
+                meta: meta("section301_exclusions"),
+                entries: vec![],
+            },
+            SnapshotFile {
+                meta: meta("entity_list"),
+                entries: vec![entity],
+            },
+        )
+        .expect("sample data")
+    }
+
+    fn meta(name: &str) -> DatasetMeta {
+        DatasetMeta {
+            published_at: "2026-07-10".into(),
+            source: name.into(),
+            source_revision: None,
+            entry_count: 1,
+            version: 1,
+        }
     }
 
     #[test]
-    fn load_includes_meta_blocks() {
-        let data = TariffData::load().expect("data must load");
-        assert_eq!(data.hts_meta.reviewed_by, "human");
-        assert_eq!(data.section_301_meta.reviewed_by, "human");
-        assert_eq!(data.hts_meta.retrieved_at, date(2026, 7, 10));
-        assert_eq!(data.section_301_meta.retrieved_at, date(2026, 7, 10));
-        assert_eq!(data.hts_meta.next_review_due, date(2026, 10, 8));
-        assert_eq!(data.section_301_meta.next_review_due, date(2026, 8, 9));
+    fn entity_list_match_finds_normalized_manufacturer() {
+        let data = sample_data();
+        let matched = data
+            .find_entity_list_match("Huawei Technologies Co., Ltd.")
+            .expect("match");
+        assert_eq!(matched.name, "Huawei Technologies Co., Ltd.");
     }
 
     #[test]
-    fn within_review_window_is_not_stale() {
-        let data = TariffData::load().expect("data must load");
-        let today = date(2026, 7, 10);
-        assert!(!data.is_stale(today));
-        assert!(data.stale_file_warnings(today).is_empty());
-        let status = data.data_status(today);
-        assert!(!status.is_stale);
-        assert!(!status.hts_electronics.is_stale);
-        assert!(!status.section_301.is_stale);
-        assert_eq!(status.hts_electronics.age_days, 0);
-        assert_eq!(status.section_301.age_days, 0);
-        assert_eq!(status.hts_electronics.meta, data.hts_meta);
-        assert_eq!(status.section_301.meta, data.section_301_meta);
-    }
-
-    #[test]
-    fn past_next_review_due_is_stale_with_warn_message() {
-        let data = TariffData::load().expect("data must load");
-        let today = date(2026, 8, 10);
-        assert!(data.is_stale(today));
-        let warnings = data.stale_file_warnings(today);
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("section_301.json"));
-        assert!(warnings[0].contains("2026-08-09"));
-        assert!(warnings[0].contains("2026-07-10"));
-        assert!(warnings[0].contains("USTR"));
-        let status = data.data_status(today);
-        assert!(status.is_stale);
-        assert!(status.section_301.is_stale);
-        assert!(!status.hts_electronics.is_stale);
+    fn entity_list_match_misses_unrelated_manufacturer() {
+        let data = sample_data();
+        assert!(data.find_entity_list_match("Murata").is_none());
     }
 }

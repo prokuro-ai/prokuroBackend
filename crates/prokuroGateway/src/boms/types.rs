@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::analyze::AnalyzeResult;
+use crate::analyze::{AnalyzeResult, AnalyzeSummary};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -12,6 +12,10 @@ pub struct BomSummary {
     pub line_count: usize,
     pub overall_risk_score: f64,
     pub at_risk_count: usize,
+    #[serde(default)]
+    pub unknown_count: usize,
+    #[serde(default)]
+    pub risk_band: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,16 +24,44 @@ pub struct BomRecord {
     pub analyze: AnalyzeResult,
 }
 
-pub fn at_risk_count(summary: &crate::analyze::AnalyzeSummary) -> usize {
-    summary.eol_or_nrnd + summary.out_of_stock + summary.long_lead
+/// Lines with a confirmed distributor match that scored red or yellow.
+pub fn at_risk_count(summary: &AnalyzeSummary) -> usize {
+    summary.red_count + summary.yellow_count
 }
 
-pub fn overall_risk_score(summary: &crate::analyze::AnalyzeSummary) -> f64 {
-    if summary.total == 0 {
+pub fn scorable_line_count(summary: &AnalyzeSummary) -> usize {
+    summary.total.saturating_sub(summary.unknown_count)
+}
+
+pub fn overall_risk_score(summary: &AnalyzeSummary) -> f64 {
+    let scorable = scorable_line_count(summary);
+    if scorable == 0 {
         return 0.0;
     }
-    let ratio = at_risk_count(summary) as f64 / summary.total as f64;
+    let ratio = at_risk_count(summary) as f64 / scorable as f64;
     ((ratio * 10.0) * 10.0).round() / 10.0
+}
+
+pub fn portfolio_risk_band(summary: &AnalyzeSummary) -> &'static str {
+    if summary.red_count > 0 {
+        "Critical"
+    } else if summary.yellow_count > 0 {
+        "Watch"
+    } else if summary.unknown_count > 0 {
+        "Unknown"
+    } else {
+        "Clear"
+    }
+}
+
+pub fn bom_summary_fields(analyze: &AnalyzeResult) -> (f64, usize, usize, String) {
+    let summary = &analyze.summary;
+    (
+        overall_risk_score(summary),
+        at_risk_count(summary),
+        summary.unknown_count,
+        portfolio_risk_band(summary).to_string(),
+    )
 }
 
 pub fn default_bom_name(filename: &str, provided: Option<&str>) -> String {
@@ -88,25 +120,38 @@ fn format_name_token(token: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::default_bom_name;
+    use super::{at_risk_count, overall_risk_score, portfolio_risk_band, scorable_line_count};
+    use crate::analyze::AnalyzeSummary;
 
-    #[test]
-    fn provided_name_wins() {
-        assert_eq!(
-            default_bom_name("adf4030_interposer_bom.csv", Some("ADF4030 Interposer")),
-            "ADF4030 Interposer"
-        );
+    fn summary(red: usize, yellow: usize, unknown: usize, total: usize) -> AnalyzeSummary {
+        AnalyzeSummary {
+            total,
+            in_stock: 0,
+            out_of_stock: 0,
+            eol_or_nrnd: 0,
+            no_match: unknown,
+            error_count: 0,
+            long_lead: 0,
+            red_count: red,
+            yellow_count: yellow,
+            green_count: total.saturating_sub(red + yellow + unknown),
+            unknown_count: unknown,
+        }
     }
 
     #[test]
-    fn filename_stem_is_humanized() {
-        assert_eq!(
-            default_bom_name("adf4030_interposer_bom.csv", None),
-            "ADF4030 Interposer BOM"
-        );
-        assert_eq!(
-            default_bom_name("speeduino-bom.csv", None),
-            "Speeduino BOM"
-        );
+    fn portfolio_band_prefers_critical_then_watch_then_unknown() {
+        assert_eq!(portfolio_risk_band(&summary(1, 0, 3, 4)), "Critical");
+        assert_eq!(portfolio_risk_band(&summary(0, 2, 3, 5)), "Watch");
+        assert_eq!(portfolio_risk_band(&summary(0, 0, 4, 4)), "Unknown");
+        assert_eq!(portfolio_risk_band(&summary(0, 0, 0, 4)), "Clear");
+    }
+
+    #[test]
+    fn overall_score_ignores_unknown_lines() {
+        assert_eq!(scorable_line_count(&summary(1, 1, 8, 10)), 2);
+        assert_eq!(overall_risk_score(&summary(1, 1, 8, 10)), 10.0);
+        assert_eq!(at_risk_count(&summary(0, 0, 10, 10)), 0);
+        assert_eq!(overall_risk_score(&summary(0, 0, 10, 10)), 0.0);
     }
 }

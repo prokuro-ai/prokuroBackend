@@ -7,7 +7,7 @@ use crate::detect::synonyms::load_synonyms;
 use crate::ingest::csv::read_csv;
 use crate::ingest::xlsx::read_xlsx;
 use crate::ingest::ParseError as IngestParseError;
-use crate::map::columns::{map_columns, ColumnMapping};
+use crate::map::columns::{confidence_for_mapping, map_columns, ColumnMapping};
 use crate::map::{ParseWarning, WarningCode};
 use crate::normalize::row::{normalize_row, BomLine};
 
@@ -56,6 +56,14 @@ pub enum ParseError {
 }
 
 pub async fn parse_file(bytes: &[u8], filename: &str) -> Result<ParseResult, ParseError> {
+    parse_file_with_mapping(bytes, filename, None).await
+}
+
+pub async fn parse_file_with_mapping(
+    bytes: &[u8],
+    filename: &str,
+    mapping_override: Option<ColumnMapping>,
+) -> Result<ParseResult, ParseError> {
     if bytes.is_empty() {
         return Err(ParseError::EmptyFile);
     }
@@ -95,8 +103,14 @@ pub async fn parse_file(bytes: &[u8], filename: &str) -> Result<ParseResult, Par
         .map(|h| h.trim().to_lowercase())
         .filter(|h| !h.is_empty())
         .collect();
-    let (column_mapping, mapping_confidence, mut warnings, column_offset) =
+    let (auto_mapping, auto_confidence, mut warnings, column_offset) =
         map_columns(&header, &synonyms);
+    let (column_mapping, mapping_confidence) = if let Some(override_map) = mapping_override {
+        let confidence = confidence_for_mapping(&override_map);
+        (override_map, confidence)
+    } else {
+        (auto_mapping, auto_confidence)
+    };
     let mapped_header: Vec<String> = header.iter().skip(column_offset).cloned().collect();
 
     let data_rows: Vec<Vec<String>> = grid.into_iter().skip(header_row_index + 1).collect();
@@ -206,6 +220,23 @@ mod tests {
             .warnings
             .iter()
             .any(|w| w.code == WarningCode::MissingMpn));
+    }
+
+    #[tokio::test]
+    async fn mapping_override_applies_user_mapping() {
+        let csv = b"Part Number,Qty,Vendor\nABC123,10,TI\n";
+        let mut override_map = std::collections::HashMap::new();
+        override_map.insert("Part Number".to_string(), "mpn".to_string());
+        override_map.insert("Qty".to_string(), "qty".to_string());
+
+        let result = parse_file_with_mapping(csv, "bom.csv", Some(override_map))
+            .await
+            .expect("parse should succeed");
+
+        assert_eq!(result.lines.len(), 1);
+        assert_eq!(result.lines[0].mpn.as_deref(), Some("ABC123"));
+        assert_eq!(result.lines[0].quantity, Some(10.0));
+        assert!(result.mapping_confidence >= 0.4);
     }
 
     #[tokio::test]

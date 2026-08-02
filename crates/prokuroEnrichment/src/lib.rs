@@ -1,5 +1,6 @@
 //! Part enrichment service: Digi-Key + DynamoDB current-row cache.
 
+pub mod drain;
 pub mod metrics;
 pub mod providers;
 pub mod store;
@@ -9,15 +10,16 @@ pub mod worker;
 
 mod store_item;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Query, State};
-use serde::Deserialize;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use serde::Deserialize;
 use serde_json::json;
 
 pub use prokuro_types::enrichment::{
@@ -52,6 +54,9 @@ async fn health() -> impl IntoResponse {
 struct EnrichQuery {
     #[serde(default)]
     force_refresh: bool,
+    /// DynamoDB only; misses enqueue to unresolved and return Pending.
+    #[serde(default)]
+    cache_only: bool,
 }
 
 async fn enrich_handler(
@@ -77,7 +82,7 @@ async fn enrich_handler(
         }
     };
 
-    match enrich_lines(&state, lines, query.force_refresh).await {
+    match enrich_lines(&state, lines, query.force_refresh, query.cache_only).await {
         Ok(results) => Json(results).into_response(),
         Err(error) => {
             tracing::error!(%error, "enrichment failed");
@@ -94,40 +99,91 @@ async fn enrich_lines(
     state: &AppState,
     lines: Vec<EnrichInput>,
     force_refresh: bool,
+    cache_only: bool,
 ) -> Result<Vec<EnrichResult>, String> {
-    let mut results = Vec::with_capacity(lines.len());
+    let n = lines.len();
+    let mut results = vec![None; n];
+    let mut pk_to_indices: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut pk_to_query: HashMap<String, PartQuery> = HashMap::new();
+
     for (idx, line) in lines.into_iter().enumerate() {
+        if normalize_mpn(&line.mpn).is_empty() {
+            results[idx] = Some(no_mpn_result(idx));
+            continue;
+        }
         let query = PartQuery {
             mpn: line.mpn,
             manufacturer: line.manufacturer,
         };
-        if normalize_mpn(&query.mpn).is_empty() {
-            results.push(no_mpn_result(idx));
-            continue;
-        }
-
         let pk = query.part_key();
-        if !force_refresh {
-            if let Some(part) = state.store.get_latest(&pk).await.map_err(|e| e.to_string())? {
-                metrics::digikey_cache_hit();
-                results.push(part_to_enrich(idx, &part, EnrichSource::Cache));
-                continue;
-            }
-        }
+        pk_to_indices.entry(pk.clone()).or_default().push(idx);
+        pk_to_query.entry(pk).or_insert(query);
+    }
 
-        metrics::digikey_live_miss();
-        match process_one(&state.store, state.provider.as_ref(), &query).await {
-            Ok(part) => results.push(part_to_enrich(idx, &part, EnrichSource::LiveMiss)),
-            Err(error) if error.contains("rate limited") || error.contains("RateLimited") => {
-                results.push(pending_result(idx));
-            }
-            Err(error) => {
-                tracing::warn!(%pk, %error, "live enrich failed");
-                results.push(pending_result(idx));
+    let unique_pks: Vec<String> = pk_to_query.keys().cloned().collect();
+    let cached = if force_refresh {
+        HashMap::new()
+    } else {
+        state
+            .store
+            .get_many(&unique_pks)
+            .await
+            .map_err(|e| e.to_string())?
+    };
+
+    for (pk, indices) in &pk_to_indices {
+        if let Some(part) = cached.get(pk) {
+            metrics::digikey_cache_hit();
+            for &idx in indices {
+                results[idx] = Some(part_to_enrich(idx, part, EnrichSource::Cache));
             }
         }
     }
-    Ok(results)
+
+    let miss_pks: Vec<String> = pk_to_query
+        .keys()
+        .filter(|pk| !cached.contains_key(*pk))
+        .cloned()
+        .collect();
+
+    if cache_only {
+        if !miss_pks.is_empty() {
+            state
+                .store
+                .enqueue_unresolved_many(&miss_pks)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        for pk in &miss_pks {
+            for &idx in &pk_to_indices[pk] {
+                results[idx] = Some(pending_result(idx));
+            }
+        }
+    } else {
+        for pk in &miss_pks {
+            let query = &pk_to_query[pk];
+            metrics::digikey_live_miss();
+            let enrich = match process_one(&state.store, state.provider.as_ref(), query).await {
+                Ok(part) => part_to_enrich(0, &part, EnrichSource::LiveMiss),
+                Err(error) => {
+                    tracing::warn!(%pk, %error, "live enrich failed");
+                    let _ = state.store.enqueue_unresolved_many(&[pk.clone()]).await;
+                    pending_result(0)
+                }
+            };
+            for &idx in &pk_to_indices[pk] {
+                let mut row = enrich.clone();
+                row.input_index = idx;
+                results[idx] = Some(row);
+            }
+        }
+    }
+
+    Ok(results
+        .into_iter()
+        .enumerate()
+        .map(|(idx, row)| row.unwrap_or_else(|| no_mpn_result(idx)))
+        .collect())
 }
 
 fn no_mpn_result(input_index: usize) -> EnrichResult {
@@ -169,29 +225,6 @@ fn pending_result(input_index: usize) -> EnrichResult {
 }
 
 fn part_to_enrich(input_index: usize, part: &PartResult, source: EnrichSource) -> EnrichResult {
-    // Digi-Key NoMatch: keep truth in DynamoDB for ops/nightly retry, but show
-    // Pending to the customer so the BOM stays "processing" rather than hard-fail.
-    if part.match_status == MatchStatus::None
-        || part.availability_status == AvailabilityStatus::NoMatch
-    {
-        return EnrichResult {
-            input_index,
-            provider_part_id: None,
-            matched_mpn: None,
-            matched_manufacturer: None,
-            match_status: MatchStatus::Pending,
-            total_avail: 0,
-            availability_status: AvailabilityStatus::Pending,
-            lifecycle_status: LifecycleStatus::Unknown,
-            factory_lead_days: None,
-            hts_code: None,
-            country_of_origin: None,
-            category: None,
-            fetched_at: Some(part.fetched_at.clone()),
-            source: Some(source),
-        };
-    }
-
     EnrichResult {
         input_index,
         provider_part_id: part.provider_part_id.clone(),

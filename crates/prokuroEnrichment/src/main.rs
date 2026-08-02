@@ -1,11 +1,12 @@
 use std::{env, net::SocketAddr, sync::Arc};
 
+use prokuro_enrichment::drain;
 use prokuro_enrichment::metrics;
-use prokuro_enrichment::providers::DigiKeyProvider;
+use prokuro_enrichment::providers::{DigiKeyProvider, RateLimiter};
 use prokuro_enrichment::store::PartStore;
-use prokuro_enrichment::types::Provider;
-use prokuro_enrichment::AppState;
 use prokuro_enrichment::sync;
+use prokuro_enrichment::types::{Provider, ProviderError};
+use prokuro_enrichment::AppState;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,7 +15,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let store = PartStore::from_env().await?;
     let provider: Arc<dyn Provider> = Arc::new(DigiKeyProvider::from_env()?);
+    let drain_batch = require_positive_usize("UNRESOLVED_DRAIN_BATCH")?;
+    let drain_concurrency = RateLimiter::max_concurrency_from_env()?;
+
     sync::spawn(store.clone(), Arc::clone(&provider));
+    drain::spawn(
+        store.clone(),
+        Arc::clone(&provider),
+        drain_batch,
+        drain_concurrency,
+    );
 
     let port = env::var("PORT")
         .ok()
@@ -32,6 +42,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
+}
+
+fn require_positive_usize(name: &str) -> Result<usize, ProviderError> {
+    let raw = env::var(name).map_err(|_| ProviderError::NotConfigured(name.into()))?;
+    let value: usize = raw
+        .parse()
+        .map_err(|_| ProviderError::NotConfigured(format!("{name} must be a positive integer")))?;
+    if value == 0 {
+        return Err(ProviderError::NotConfigured(format!(
+            "{name} must be >= 1"
+        )));
+    }
+    Ok(value)
 }
 
 async fn shutdown_signal() {

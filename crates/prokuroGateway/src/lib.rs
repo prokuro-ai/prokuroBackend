@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::collections::HashMap;
 
 use axum::body::Body;
 use axum::extract::Multipart;
@@ -68,9 +69,10 @@ async fn health() -> impl IntoResponse {
 
 async fn read_upload(
     mut multipart: Multipart,
-) -> Result<(String, Vec<u8>), (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(String, Vec<u8>, Option<HashMap<String, String>>), (StatusCode, Json<serde_json::Value>)> {
     let mut file_bytes: Option<Vec<u8>> = None;
     let mut filename = String::from("upload.csv");
+    let mut column_mapping: Option<HashMap<String, String>> = None;
 
     loop {
         match multipart.next_field().await {
@@ -88,6 +90,26 @@ async fn read_upload(
                             ));
                         }
                     }
+                } else if field.name() == Some("column_mapping") {
+                    match field.text().await {
+                        Ok(raw) if !raw.trim().is_empty() => {
+                            column_mapping = Some(
+                                serde_json::from_str(&raw).map_err(|error| {
+                                    (
+                                        StatusCode::BAD_REQUEST,
+                                        Json(json!({"error": format!("invalid column_mapping JSON: {error}")})),
+                                    )
+                                })?,
+                            );
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            return Err((
+                                StatusCode::BAD_REQUEST,
+                                Json(json!({"error": error.to_string()})),
+                            ));
+                        }
+                    }
                 }
             }
             Ok(None) => break,
@@ -101,7 +123,7 @@ async fn read_upload(
     }
 
     match file_bytes {
-        Some(bytes) => Ok((filename, bytes)),
+        Some(bytes) => Ok((filename, bytes, column_mapping)),
         None => Err((
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(json!({"error": "missing 'file' field"})),
@@ -126,13 +148,13 @@ fn parser_error_response(error: GatewayError) -> (StatusCode, Json<serde_json::V
 }
 
 async fn parse_handler(multipart: Multipart) -> impl IntoResponse {
-    let (filename, bytes) = match read_upload(multipart).await {
+    let (filename, bytes, column_mapping) = match read_upload(multipart).await {
         Ok(upload) => upload,
         Err(response) => return response.into_response(),
     };
 
     let parser = ParserClient::from_env();
-    let response = match parser.parse_raw(&filename, bytes).await {
+    let response = match parser.parse_raw(&filename, bytes, column_mapping).await {
         Ok(response) => response,
         Err(error) => return parser_error_response(error).into_response(),
     };
@@ -154,12 +176,12 @@ async fn parse_handler(multipart: Multipart) -> impl IntoResponse {
 }
 
 async fn analyze_handler(multipart: Multipart) -> impl IntoResponse {
-    let (filename, bytes) = match read_upload(multipart).await {
+    let (filename, bytes, column_mapping) = match read_upload(multipart).await {
         Ok(upload) => upload,
         Err(response) => return response.into_response(),
     };
 
-    match analyze_upload(&filename, bytes).await {
+    match analyze_upload(&filename, bytes, column_mapping).await {
         Ok(result) => Json(result).into_response(),
         Err(error) => analyze_pipeline_error_response(error).into_response(),
     }
@@ -174,14 +196,16 @@ pub enum AnalyzePipelineError {
 async fn analyze_upload(
     filename: &str,
     bytes: Vec<u8>,
+    column_mapping: Option<HashMap<String, String>>,
 ) -> Result<AnalyzeResult, AnalyzePipelineError> {
+    let user_confirmed = column_mapping.is_some();
     let parser = ParserClient::from_env();
-    let parse = match parser.parse(filename, bytes).await {
+    let parse = match parser.parse(filename, bytes, column_mapping).await {
         Ok(result) => result,
         Err(error) => return Err(AnalyzePipelineError::Parser(error)),
     };
 
-    if parse.mapping_confidence < 0.3 {
+    if !user_confirmed && parse.mapping_confidence < 0.3 {
         return Err(AnalyzePipelineError::LowMappingConfidence);
     }
 
@@ -195,7 +219,7 @@ async fn analyze_upload(
         .collect();
 
     let enrich_client = EnrichmentClient::from_env();
-    let (enrich, enrichment_warning) = match enrich_client.enrich(&enrich_inputs).await {
+    let (enrich, enrichment_warning) = match enrich_client.enrich_cache_only(&enrich_inputs).await {
         Ok(result) => (result, None),
         Err(error) => {
             tracing::warn!(%error, "enrichment unavailable; continuing with parse-only lines");
@@ -242,6 +266,7 @@ async fn apply_tariff_overlay(merged: &mut AnalyzeResult) {
             description: line.description.clone(),
             category: line.category.clone(),
             country_of_origin: line.country_of_origin.clone(),
+            manufacturer: line.manufacturer.clone(),
         })
         .collect();
 

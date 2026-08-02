@@ -110,6 +110,8 @@ fn sample_line() -> AnalyzedLine {
         rate_basis: None,
         is_stale: None,
         tariff_disclaimer: None,
+        entity_list_match: None,
+        entity_list_notes: None,
     }
 }
 
@@ -166,6 +168,7 @@ async fn tariff_overlay_populates_analyzed_line_fields_from_mock_service() {
             description: Some("CAP CER 0.1UF X7R".into()),
             category: None,
             country_of_origin: None,
+            manufacturer: Some("Murata".into()),
         }])
         .await
         .expect("mock tariff should respond");
@@ -193,6 +196,7 @@ async fn tariff_overlay_populates_analyzed_line_fields_from_mock_service() {
             red_count: 0,
             yellow_count: 0,
             green_count: 0,
+            unknown_count: 0,
         },
         lines: vec![sample_line()],
         top_risks: Vec::new(),
@@ -232,7 +236,7 @@ fn provider_error_maps_to_yellow_risk_contract() {
     assert_eq!(score_risk(&line), RiskLevel::Yellow);
 
     line.availability_status = "NoMatch".into();
-    assert_eq!(score_risk(&line), RiskLevel::Red);
+    assert_eq!(score_risk(&line), RiskLevel::Unknown);
 }
 
 #[tokio::test]
@@ -251,4 +255,6 @@ async fn tariff_fields_absent_when_tariff_url_unset() {
     assert!(value.get("rate_basis").is_none());
     assert!(value.get("is_stale").is_none());
     assert!(value.get("tariff_disclaimer").is_none());
+    assert!(value.get("entity_list_match").is_none());
+    assert!(value.get("entity_list_notes").is_none());
 }

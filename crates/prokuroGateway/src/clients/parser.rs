@@ -7,6 +7,7 @@ use crate::GatewayError;
 
 const DEFAULT_PARSER_URL: &str = "http://localhost:3001";
 const PARSER_URL_ENV: &str = "PARSER_URL";
+const PARSER_TIMEOUT_SECS: u64 = 120;
 
 pub struct ParserClient {
     base_url: String,
@@ -27,8 +28,13 @@ impl ParserClient {
         Self::new(base_url)
     }
 
-    pub async fn parse(&self, filename: &str, bytes: Vec<u8>) -> Result<ParseResult, GatewayError> {
-        let response = self.parse_raw(filename, bytes).await?;
+    pub async fn parse(
+        &self,
+        filename: &str,
+        bytes: Vec<u8>,
+        column_mapping: Option<HashMap<String, String>>,
+    ) -> Result<ParseResult, GatewayError> {
+        let response = self.parse_raw(filename, bytes, column_mapping).await?;
 
         if !response.status().is_success() {
             return Err(GatewayError::ParserError(format!(
@@ -47,16 +53,25 @@ impl ParserClient {
         &self,
         filename: &str,
         bytes: Vec<u8>,
+        column_mapping: Option<HashMap<String, String>>,
     ) -> Result<reqwest::Response, GatewayError> {
         let url = format!("{}/v1/parse", self.base_url.trim_end_matches('/'));
-        let form = reqwest::multipart::Form::new().part(
+        let mut form = reqwest::multipart::Form::new().part(
             "file",
             reqwest::multipart::Part::bytes(bytes).file_name(filename.to_string()),
         );
+        if let Some(mapping) = column_mapping {
+            form = form.text(
+                "column_mapping",
+                serde_json::to_string(&mapping).map_err(|error| {
+                    GatewayError::ParserError(format!("column_mapping serialization failed: {error}"))
+                })?,
+            );
+        }
 
         self.http
             .post(url)
-            .timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(PARSER_TIMEOUT_SECS))
             .multipart(form)
             .send()
             .await

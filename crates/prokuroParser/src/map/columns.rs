@@ -198,6 +198,15 @@ pub fn map_columns(
     (mapping, confidence, warnings, column_offset)
 }
 
+/// Confidence score for a user-confirmed or override mapping.
+pub fn confidence_for_mapping(mapping: &ColumnMapping) -> f32 {
+    CANONICAL
+        .iter()
+        .filter(|&&(field, _)| mapping.values().any(|v| v == field))
+        .map(|&(_, weight)| weight)
+        .sum()
+}
+
 fn normalize_header(header: &str) -> String {
     header
         .trim()

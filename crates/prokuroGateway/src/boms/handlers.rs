@@ -7,12 +7,15 @@ use serde_json::json;
 
 use prokuro_types::pagination::{page_by_id, PageError, PageParams};
 
-use crate::analyze::AnalyzeResult;
+use crate::analyze::{
+    apply_enrichment_results, finalize_analyze, AnalyzeResult,
+};
 use crate::auth::authenticate;
+use crate::clients::enrichment::{EnrichInput, EnrichmentClient};
 use crate::state::AppState;
 
 use super::store::{CreateBomInput, StoreError};
-use super::types::BomSummary;
+use super::types::{bom_summary_fields, BomSummary};
 
 #[derive(Debug, Deserialize)]
 pub struct ListBomsQuery {
@@ -61,7 +64,35 @@ pub async fn get_bom(
     };
 
     match state.bom_store.get_bom(&user.account_id, &bom_id).await {
-        Ok(record) => Json(record).into_response(),
+        Ok(mut record) => {
+            if let Err(error) = refresh_enrichment(&mut record).await {
+                tracing::warn!(%error, bom_id, "read-through enrichment failed; returning stored analyze");
+            } else {
+                let (score, at_risk, unknown_count, risk_band) =
+                    bom_summary_fields(&record.analyze);
+                let lines = record.analyze.summary.total;
+                if at_risk != record.summary.at_risk_count
+                    || (score - record.summary.overall_risk_score).abs() > f64::EPSILON
+                    || lines != record.summary.line_count
+                    || unknown_count != record.summary.unknown_count
+                    || risk_band != record.summary.risk_band
+                {
+                    record.summary.at_risk_count = at_risk;
+                    record.summary.overall_risk_score = score;
+                    record.summary.line_count = lines;
+                    record.summary.unknown_count = unknown_count;
+                    record.summary.risk_band = risk_band;
+                    if let Err(error) = state
+                        .bom_store
+                        .update_summary(&user.account_id, &bom_id, &record.summary)
+                        .await
+                    {
+                        tracing::warn!(%error, bom_id, "failed to persist refreshed BOM summary");
+                    }
+                }
+            }
+            Json(record).into_response()
+        }
         Err(StoreError::NotFound) => (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "BOM not found" })),
@@ -69,6 +100,28 @@ pub async fn get_bom(
             .into_response(),
         Err(error) => store_error_response(error).into_response(),
     }
+}
+
+async fn refresh_enrichment(record: &mut super::types::BomRecord) -> Result<(), String> {
+    if record.analyze.lines.is_empty() {
+        return Ok(());
+    }
+    let enrich_inputs: Vec<EnrichInput> = record
+        .analyze
+        .lines
+        .iter()
+        .map(|line| EnrichInput {
+            mpn: line.mpn.clone().unwrap_or_default(),
+            manufacturer: line.manufacturer.clone(),
+        })
+        .collect();
+    let enrich = EnrichmentClient::from_env()
+        .enrich_cache_only(&enrich_inputs)
+        .await
+        .map_err(|e| e.to_string())?;
+    apply_enrichment_results(&mut record.analyze.lines, &enrich);
+    finalize_analyze(&mut record.analyze);
+    Ok(())
 }
 
 pub async fn create_bom(

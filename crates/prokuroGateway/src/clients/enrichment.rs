@@ -26,15 +26,37 @@ impl EnrichmentClient {
         Self::new(base_url)
     }
 
-    pub async fn enrich(
+    /// BOM upload analyze: cache hits only; misses stay Pending (no sequential Digi-Key calls).
+    pub async fn enrich_cache_only(
         &self,
         lines: &[EnrichInput],
     ) -> Result<Vec<EnrichResult>, GatewayError> {
-        let url = format!("{}/v1/enrich", self.base_url.trim_end_matches('/'));
+        self.enrich(lines, true).await
+    }
+
+    pub async fn enrich(
+        &self,
+        lines: &[EnrichInput],
+        cache_only: bool,
+    ) -> Result<Vec<EnrichResult>, GatewayError> {
+        let line_count = lines.len().max(1);
+        let timeout_secs = if cache_only {
+            // DynamoDB reads only — scale gently for very large BOMs.
+            (line_count as u64).saturating_mul(1).clamp(60, 600)
+        } else {
+            // Live Digi-Key: ~750ms min spacing per uncached line.
+            (line_count as u64).saturating_mul(2).clamp(120, 3600)
+        };
+
+        let url = format!(
+            "{}/v1/enrich?cache_only={}",
+            self.base_url.trim_end_matches('/'),
+            cache_only
+        );
         let response = self
             .http
             .post(url)
-            .timeout(Duration::from_secs(60))
+            .timeout(Duration::from_secs(timeout_secs))
             .json(lines)
             .send()
             .await

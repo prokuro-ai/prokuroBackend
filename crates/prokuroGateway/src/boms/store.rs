@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::analyze::AnalyzeResult;
 
 use super::types::{
-    at_risk_count, default_bom_name, extension_for, overall_risk_score, BomRecord, BomSummary,
+    bom_summary_fields, default_bom_name, extension_for, BomRecord, BomSummary,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -92,19 +92,46 @@ impl BomStore {
         })
     }
 
+    /// Lazily persist a recomputed summary into metadata.json and index.json.
+    pub async fn update_summary(
+        &self,
+        account_id: &str,
+        bom_id: &str,
+        summary: &BomSummary,
+    ) -> Result<(), StoreError> {
+        let prefix = self.bom_prefix(account_id, bom_id);
+        let mut metadata = self
+            .read_json::<BomMetadata>(&format!("{prefix}/metadata.json"))
+            .await?;
+        metadata.summary = summary.clone();
+        self.write_json(&format!("{prefix}/metadata.json"), &metadata)
+            .await?;
+
+        let mut index = self.read_index(account_id).await?;
+        if let Some(entry) = index.boms.iter_mut().find(|item| item.id == bom_id) {
+            *entry = summary.clone();
+        }
+        self.write_index(account_id, &index).await?;
+        Ok(())
+    }
+
     pub async fn create_bom(&self, input: CreateBomInput) -> Result<BomSummary, StoreError> {
         let bom_id = input.analyze.upload_id.clone();
         let prefix = self.bom_prefix(&input.account_id, &bom_id);
         let uploaded_at = chrono_now();
         let name = default_bom_name(&input.filename, input.name.as_deref());
+        let (overall_risk_score, at_risk_count, unknown_count, risk_band) =
+            bom_summary_fields(&input.analyze);
         let summary = BomSummary {
             id: bom_id.clone(),
             name,
             filename: input.filename.clone(),
             uploaded_at,
             line_count: input.analyze.summary.total,
-            overall_risk_score: overall_risk_score(&input.analyze.summary),
-            at_risk_count: at_risk_count(&input.analyze.summary),
+            overall_risk_score,
+            at_risk_count,
+            unknown_count,
+            risk_band,
         };
 
         let ext = extension_for(&input.filename);
@@ -343,6 +370,7 @@ mod tests {
                 red_count: 1,
                 yellow_count: 1,
                 green_count: 2,
+                unknown_count: 0,
             },
             lines: Vec::new(),
             top_risks: Vec::new(),

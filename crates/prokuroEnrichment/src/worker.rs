@@ -10,6 +10,7 @@ use prokuro_types::enrichment::{AvailabilityStatus, LifecycleStatus, MatchStatus
 /// Look up a part, upsert the current row, and return the stored snapshot.
 ///
 /// Rate limits propagate as `Err`. Digi-Key NoMatch is written and returned as Ok.
+/// Does not enqueue to unresolved — callers that need queueing do so separately.
 pub async fn process_one(
     store: &PartStore,
     provider: &dyn Provider,
@@ -45,9 +46,6 @@ pub async fn process_one(
                 .put_snapshot(&pk, &snapshot)
                 .await
                 .map_err(|e| e.to_string())?;
-            let _ = store
-                .log_unresolved(&query.mpn, query.manufacturer.as_deref())
-                .await;
             tracing::info!(%pk, "no provider match; wrote NoMatch snapshot");
             Ok(snapshot)
         }
@@ -60,4 +58,19 @@ pub async fn process_one(
             Err(error.to_string())
         }
     }
+}
+
+/// Cache-first: return existing DynamoDB snapshot if present, otherwise live lookup.
+pub async fn process_one_cache_first(
+    store: &PartStore,
+    provider: &dyn Provider,
+    query: &PartQuery,
+) -> Result<PartResult, String> {
+    let pk = query.part_key();
+    if let Some(part) = store.get_latest(&pk).await.map_err(|e| e.to_string())? {
+        metrics::digikey_cache_hit();
+        return Ok(part);
+    }
+    metrics::digikey_live_miss();
+    process_one(store, provider, query).await
 }

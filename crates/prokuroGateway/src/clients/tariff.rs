@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::GatewayError;
 
 const TARIFF_URL_ENV: &str = "TARIFF_URL";
-const REQUEST_TIMEOUT_SECS: u64 = 10;
+const TARIFF_TIMEOUT_MIN_SECS: u64 = 60;
+const TARIFF_TIMEOUT_MAX_SECS: u64 = 600;
 
 pub struct TariffClient {
     base_url: String,
@@ -32,11 +33,15 @@ impl TariffClient {
         &self,
         lines: &[TariffInput],
     ) -> Result<Vec<TariffResult>, GatewayError> {
+        let line_count = lines.len().max(1);
+        let timeout_secs = (line_count as u64)
+            .saturating_mul(1)
+            .clamp(TARIFF_TIMEOUT_MIN_SECS, TARIFF_TIMEOUT_MAX_SECS);
         let url = format!("{}/v1/tariff", self.base_url.trim_end_matches('/'));
         let response = self
             .http
             .post(url)
-            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .timeout(Duration::from_secs(timeout_secs))
             .json(lines)
             .send()
             .await
@@ -71,6 +76,8 @@ pub struct TariffInput {
     pub category: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub country_of_origin: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manufacturer: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +104,12 @@ pub struct TariffResult {
     pub rate_basis: String,
     pub estimated: bool,
     pub notes: Option<String>,
+    #[serde(default)]
+    pub entity_list_match: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity_list_matched_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity_list_notes: Option<String>,
     pub data_sources: TariffDataSources,
     pub disclaimer: String,
 }

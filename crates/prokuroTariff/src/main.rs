@@ -1,18 +1,23 @@
-use std::{env, net::SocketAddr, process, sync::Arc};
+use std::{env, net::SocketAddr, process, sync::{Arc, RwLock}};
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    let data = match prokuro_tariff::data::TariffData::load() {
-        Ok(data) => Arc::new(data),
+    let data = match prokuro_tariff::data::TariffData::load().await {
+        Ok(data) => Arc::new(RwLock::new(data)),
         Err(error) => {
             tracing::error!(%error, "refusing to start: official tariff data failed to load");
             process::exit(1);
         }
     };
 
-    data.log_staleness_warnings(chrono::Utc::now().date_naive());
+    {
+        let guard = data.read().expect("tariff data lock poisoned");
+        guard.log_staleness_warnings(chrono::Utc::now().date_naive());
+    }
+
+    prokuro_tariff::spawn_dataset_reload_task(data.clone());
 
     let port = env::var("PORT")
         .ok()

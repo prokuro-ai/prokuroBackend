@@ -11,6 +11,7 @@ pub enum RiskLevel {
     Red,
     Yellow,
     Green,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +40,8 @@ pub struct AnalyzeSummary {
     pub red_count: usize,
     pub yellow_count: usize,
     pub green_count: usize,
+    #[serde(default)]
+    pub unknown_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +81,10 @@ pub struct AnalyzedLine {
     pub is_stale: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tariff_disclaimer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity_list_match: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity_list_notes: Option<String>,
 }
 
 pub fn merge(parse: ParseResult, enrich: Vec<EnrichResult>) -> AnalyzeResult {
@@ -121,6 +128,8 @@ pub fn merge(parse: ParseResult, enrich: Vec<EnrichResult>) -> AnalyzeResult {
                 rate_basis: None,
                 is_stale: None,
                 tariff_disclaimer: None,
+                entity_list_match: None,
+                entity_list_notes: None,
             }
         })
         .collect();
@@ -141,6 +150,7 @@ pub fn merge(parse: ParseResult, enrich: Vec<EnrichResult>) -> AnalyzeResult {
             red_count: 0,
             yellow_count: 0,
             green_count: 0,
+            unknown_count: 0,
         },
         lines,
         top_risks: Vec::new(),
@@ -150,6 +160,32 @@ pub fn merge(parse: ParseResult, enrich: Vec<EnrichResult>) -> AnalyzeResult {
     };
     finalize_analyze(&mut result);
     result
+}
+
+/// Overlay cache enrichment onto existing lines (preserves tariff / parse fields).
+pub fn apply_enrichment_results(lines: &mut [AnalyzedLine], enrich: &[EnrichResult]) {
+    let by_index: std::collections::HashMap<usize, &EnrichResult> =
+        enrich.iter().map(|item| (item.input_index, item)).collect();
+
+    for (idx, line) in lines.iter_mut().enumerate() {
+        let Some(e) = by_index.get(&idx).copied() else {
+            continue;
+        };
+        line.availability_status = e.availability_status.to_string();
+        line.lifecycle_status = e.lifecycle_status.to_string();
+        line.match_status = e.match_status.to_string();
+        line.factory_lead_days = e.factory_lead_days;
+        line.total_avail = e.total_avail;
+        if line.category.is_none() {
+            line.category = e.category.clone();
+        }
+        if line.hts_code.is_none() {
+            line.hts_code = e.hts_code.clone();
+        }
+        if line.country_of_origin.is_none() {
+            line.country_of_origin = e.country_of_origin.clone();
+        }
+    }
 }
 
 /// Copy tariff service fields onto analyzed lines (zip by index).
@@ -167,6 +203,8 @@ pub fn apply_tariff_results(lines: &mut [AnalyzedLine], tariff_results: Vec<Tari
         line.rate_basis = Some(tariff.rate_basis);
         line.is_stale = Some(tariff.data_sources.is_stale);
         line.tariff_disclaimer = Some(tariff.disclaimer);
+        line.entity_list_match = Some(tariff.entity_list_match);
+        line.entity_list_notes = tariff.entity_list_notes;
     }
 }
 
@@ -225,24 +263,45 @@ pub fn finalize_analyze(result: &mut AnalyzeResult) {
         .iter()
         .filter(|line| line.risk_level == RiskLevel::Green)
         .count();
+    result.summary.unknown_count = result
+        .lines
+        .iter()
+        .filter(|line| line.risk_level == RiskLevel::Unknown)
+        .count();
 
     result.top_risks = select_top_risks(&result.lines, 5);
 }
 
+/// Pending enrichment or a resolved distributor no-match — not lifecycle/supply scored.
+fn is_unscored_line(line: &AnalyzedLine) -> bool {
+    let availability = line.availability_status.to_ascii_lowercase();
+    let match_status = line.match_status.to_ascii_lowercase();
+
+    availability == "pending"
+        || match_status == "pending"
+        || availability == "nomatch"
+}
+
 pub fn score_risk(line: &AnalyzedLine) -> RiskLevel {
+    if line.entity_list_match == Some(true) {
+        return RiskLevel::Red;
+    }
+
+    if is_unscored_line(line) {
+        return RiskLevel::Unknown;
+    }
+
     let availability = line.availability_status.to_ascii_lowercase();
     let lifecycle = line.lifecycle_status.to_ascii_lowercase();
 
-    if availability == "nomatch"
-        || lifecycle == "eol"
+    if lifecycle == "eol"
         || lifecycle == "discontinued"
         || line.total_duty_pct.is_some_and(|pct| pct >= 25.0)
     {
         return RiskLevel::Red;
     }
 
-    if availability == "pending"
-        || availability == "error"
+    if availability == "error"
         || availability == "outofstock"
         || lifecycle == "nrnd"
         || line.factory_lead_days.is_some_and(|days| days > 182)
@@ -274,6 +333,7 @@ fn risk_priority(level: RiskLevel) -> u8 {
         RiskLevel::Red => 0,
         RiskLevel::Yellow => 1,
         RiskLevel::Green => 2,
+        RiskLevel::Unknown => 3,
     }
 }
 
@@ -316,6 +376,8 @@ mod tests {
             rate_basis: None,
             is_stale: None,
             tariff_disclaimer: None,
+            entity_list_match: None,
+            entity_list_notes: None,
         }
     }
 
@@ -343,29 +405,43 @@ mod tests {
         assert!(value.get("rate_basis").is_none());
         assert!(value.get("is_stale").is_none());
         assert!(value.get("tariff_disclaimer").is_none());
+        assert!(value.get("entity_list_match").is_none());
+        assert!(value.get("entity_list_notes").is_none());
         assert_eq!(value["mpn"], json!("MPN-0"));
         assert_eq!(value["risk_level"], json!("green"));
     }
 
     #[test]
-    fn no_match_availability_is_red_regardless_of_other_fields() {
+    fn entity_list_match_is_red_regardless_of_other_fields() {
+        let mut line = healthy_line(5);
+        line.entity_list_match = Some(true);
+        line.total_duty_pct = Some(0.0);
+        line.availability_status = "InStock".into();
+        assert_eq!(score_risk(&line), RiskLevel::Red);
+    }
+
+    #[test]
+    fn no_match_availability_is_unknown_not_critical() {
         let mut line = healthy_line(0);
         line.availability_status = "NoMatch".into();
-        line.total_duty_pct = Some(0.0);
-        assert_eq!(score_risk(&line), RiskLevel::Red);
+        line.match_status = "None".into();
+        line.total_duty_pct = Some(25.0);
+        assert_eq!(score_risk(&line), RiskLevel::Unknown);
+    }
+
+    #[test]
+    fn pending_availability_is_unknown() {
+        let mut line = healthy_line(0);
+        line.availability_status = "Pending".into();
+        line.match_status = "Pending".into();
+        assert_eq!(score_risk(&line), RiskLevel::Unknown);
     }
 
     #[test]
     fn provider_error_availability_is_yellow_not_red() {
         let mut line = healthy_line(0);
         line.availability_status = "Error".into();
-        assert_eq!(score_risk(&line), RiskLevel::Yellow);
-    }
-
-    #[test]
-    fn pending_availability_is_yellow() {
-        let mut line = healthy_line(0);
-        line.availability_status = "Pending".into();
+        line.match_status = "Exact".into();
         assert_eq!(score_risk(&line), RiskLevel::Yellow);
     }
 
@@ -423,6 +499,7 @@ mod tests {
                 red_count: 0,
                 yellow_count: 0,
                 green_count: 0,
+                unknown_count: 0,
             },
             lines: vec![
                 {
@@ -444,9 +521,10 @@ mod tests {
             analyzed_at: "2026-07-10T00:00:00Z".into(),
         };
         finalize_analyze(&mut result);
-        assert_eq!(result.summary.red_count, 1);
+        assert_eq!(result.summary.red_count, 0);
         assert_eq!(result.summary.yellow_count, 1);
         assert_eq!(result.summary.green_count, 2);
+        assert_eq!(result.summary.unknown_count, 1);
         assert_eq!(result.summary.total, 4);
         assert_eq!(result.summary.no_match, 1);
         assert_eq!(result.summary.error_count, 0);
@@ -470,6 +548,7 @@ mod tests {
                 red_count: 0,
                 yellow_count: 0,
                 green_count: 0,
+                unknown_count: 0,
             },
             lines: (0..10)
                 .map(|idx| {
@@ -509,6 +588,7 @@ mod tests {
                 red_count: 0,
                 yellow_count: 0,
                 green_count: 0,
+                unknown_count: 0,
             },
             lines: vec![
                 {
@@ -608,6 +688,7 @@ mod tests {
                 red_count: 0,
                 yellow_count: 0,
                 green_count: 0,
+                unknown_count: 0,
             },
             lines,
             top_risks: Vec::new(),
@@ -617,8 +698,7 @@ mod tests {
         };
         finalize_analyze(&mut result);
 
-        assert_eq!(result.top_risks.len(), 5);
-        // Reds first by row_index: 2, 3, 5 — then Yellows by row_index: 1, 7
+        assert_eq!(result.top_risks.len(), 4);
         assert_eq!(
             result
                 .top_risks
@@ -626,11 +706,10 @@ mod tests {
                 .map(|line| (line.risk_level, line.row_index))
                 .collect::<Vec<_>>(),
             vec![
-                (RiskLevel::Red, 2),
-                (RiskLevel::Red, 3),
-                (RiskLevel::Red, 5),
                 (RiskLevel::Yellow, 1),
                 (RiskLevel::Yellow, 7),
+                (RiskLevel::Yellow, 8),
+                (RiskLevel::Yellow, 10),
             ]
         );
         assert!(!result.top_risks.iter().any(|line| line.row_index == 99));

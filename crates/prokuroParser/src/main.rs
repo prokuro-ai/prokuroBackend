@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, time::Duration};
+use std::{collections::HashMap, env, net::SocketAddr, time::Duration};
 
 use axum::{
     extract::{MatchedPath, Multipart},
@@ -11,7 +11,8 @@ use serde_json::json;
 use tower_http::trace::TraceLayer;
 use tracing::info_span;
 
-use prokuro_parser::pipeline::{parse_file, ParseError};
+use prokuro_parser::map::columns::ColumnMapping;
+use prokuro_parser::pipeline::{parse_file_with_mapping, ParseError};
 
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
@@ -81,6 +82,7 @@ async fn health() -> impl IntoResponse {
 async fn parse_handler(mut multipart: Multipart) -> impl IntoResponse {
     let mut file_bytes: Option<Vec<u8>> = None;
     let mut filename = String::from("upload");
+    let mut column_mapping: Option<ColumnMapping> = None;
 
     loop {
         match multipart.next_field().await {
@@ -109,6 +111,28 @@ async fn parse_handler(mut multipart: Multipart) -> impl IntoResponse {
                             }
                         }
                     }
+                    "column_mapping" => match field.text().await {
+                        Ok(raw) if !raw.trim().is_empty() => {
+                            match serde_json::from_str::<HashMap<String, String>>(&raw) {
+                                Ok(mapping) => column_mapping = Some(mapping),
+                                Err(error) => {
+                                    return (
+                                        StatusCode::BAD_REQUEST,
+                                        Json(json!({"error": format!("invalid column_mapping JSON: {error}")})),
+                                    )
+                                        .into_response()
+                                }
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            return (
+                                StatusCode::BAD_REQUEST,
+                                Json(json!({"error": error.to_string()})),
+                            )
+                                .into_response()
+                        }
+                    },
                     _ => {}
                 }
             }
@@ -134,8 +158,9 @@ async fn parse_handler(mut multipart: Multipart) -> impl IntoResponse {
         }
     };
 
-    match parse_file(&bytes, &filename).await {
-        Ok(result) if result.mapping_confidence < 0.3 => {
+    let user_confirmed = column_mapping.is_some();
+    match parse_file_with_mapping(&bytes, &filename, column_mapping).await {
+        Ok(result) if !user_confirmed && result.mapping_confidence < 0.3 => {
             (StatusCode::UNPROCESSABLE_ENTITY, Json(result)).into_response()
         }
         Ok(result) => Json(result).into_response(),

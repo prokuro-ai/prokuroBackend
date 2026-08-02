@@ -34,14 +34,19 @@ struct CachedToken {
 }
 
 impl DigiKeyProvider {
-    pub fn new(client_id: String, client_secret: String, base_url: String) -> Self {
+    pub fn new(
+        client_id: String,
+        client_secret: String,
+        base_url: String,
+        rate: Arc<RateLimiter>,
+    ) -> Self {
         Self {
             client: reqwest::Client::new(),
             client_id,
             client_secret,
             base_url: base_url.trim_end_matches('/').to_string(),
             token: RwLock::new(None),
-            rate: RateLimiter::new(),
+            rate,
         }
     }
 
@@ -50,7 +55,12 @@ impl DigiKeyProvider {
             .map_err(|_| ProviderError::NotConfigured("DIGIKEY_CLIENT_ID".into()))?;
         let client_secret = env::var("DIGIKEY_CLIENT_SECRET")
             .map_err(|_| ProviderError::NotConfigured("DIGIKEY_CLIENT_SECRET".into()))?;
-        Ok(Self::new(client_id, client_secret, BASE_URL.into()))
+        Ok(Self::new(
+            client_id,
+            client_secret,
+            BASE_URL.into(),
+            RateLimiter::from_env()?,
+        ))
     }
 
     async fn access_token(&self) -> Result<String, ProviderError> {
@@ -133,26 +143,26 @@ impl DigiKeyProvider {
                         .await
                         .map_err(|e| ProviderError::Request(e.to_string()))?;
 
+                    observe_rate_headers(&self.rate, response.headers());
+
                     let status = response.status();
                     if status.as_u16() == 429 {
                         crate::metrics::digikey_http_429();
-                        if attempt >= 3 {
-                            crate::metrics::digikey_rate_limited();
-                            return Err(ProviderError::RateLimited);
-                        }
                         let retry_after = response
                             .headers()
                             .get("Retry-After")
                             .and_then(|v| v.to_str().ok())
-                            .and_then(|s| s.parse::<u64>().ok());
-                        // Honor Retry-After when present; otherwise exponential backoff with jitter.
-                        let base = retry_after.unwrap_or(1u64 << attempt).max(1);
+                            .and_then(|s| s.parse::<u64>().ok())
+                            .unwrap_or(1u64 << attempt)
+                            .max(1);
+                        self.rate.pause_for(retry_after).await;
+                        if attempt >= 3 {
+                            crate::metrics::digikey_rate_limited();
+                            return Err(ProviderError::RateLimited);
+                        }
                         let jitter_ms = (attempt as u64).saturating_mul(117) % 250;
                         attempt += 1;
-                        tokio::time::sleep(
-                            Duration::from_secs(base) + Duration::from_millis(jitter_ms),
-                        )
-                        .await;
+                        tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
                         continue;
                     }
                     if status.as_u16() == 404 {
@@ -171,6 +181,18 @@ impl DigiKeyProvider {
             })
             .await
     }
+}
+
+fn observe_rate_headers(rate: &RateLimiter, headers: &reqwest::header::HeaderMap) {
+    let burst = headers
+        .get("X-BurstLimit-Limit")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<usize>().ok());
+    let daily = headers
+        .get("X-RateLimit-Limit")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u32>().ok());
+    rate.observe_limits(burst, daily);
 }
 
 #[async_trait]

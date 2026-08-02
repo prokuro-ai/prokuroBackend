@@ -20,6 +20,8 @@ thiserror = "*"
 tracing = "*"
 tracing-subscriber = "*"
 tower-http = { version = "*", features = ["trace"] }
+aws-config = "1"
+aws-sdk-s3 = "1"
 
 [dev-dependencies]
 tower = "*"

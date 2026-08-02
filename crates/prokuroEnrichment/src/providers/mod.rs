@@ -1,3 +1,3 @@
 pub mod digikey;
 
-pub use digikey::DigiKeyProvider;
+pub use digikey::{DigiKeyProvider, RateLimiter};
