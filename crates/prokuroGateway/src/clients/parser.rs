@@ -80,7 +80,6 @@ pub struct ParseResult {
     pub lines: Vec<ParsedLine>,
     pub warnings: Vec<serde_json::Value>,
     pub stats: serde_json::Value,
-    pub flywheel_events: Vec<FlywheelEvent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,13 +91,4 @@ pub struct ParsedLine {
     pub description: Option<String>,
     pub aml_candidates: Vec<String>,
     pub row_index: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FlywheelEvent {
-    pub mpn: Option<String>,
-    pub manufacturer: Option<String>,
-    pub quantity: Option<f64>,
-    pub refdes: Option<String>,
-    pub aml_candidates: Vec<String>,
 }

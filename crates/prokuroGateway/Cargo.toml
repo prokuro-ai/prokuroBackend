@@ -1,6 +1,6 @@
 [package]
 name = "prokuro-gateway"
-description = "Public BFF: POST /v1/analyze, BOM persistence, flywheel logging"
+description = "Public BFF: POST /v1/analyze, BOM persistence"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
