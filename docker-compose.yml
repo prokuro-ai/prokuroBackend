@@ -33,6 +33,15 @@ services:
     environment:
       - PORT=3003
 
+  purchasing:
+    build:
+      context: .
+      dockerfile: docker/purchasing.Dockerfile
+    ports:
+      - "3004:3004"
+    environment:
+      - PORT=3004
+
   gateway:
     build:
       context: .
@@ -44,6 +53,7 @@ services:
       - PARSER_URL=http://parser:3001
       - ENRICHMENT_URL=http://enrichment:3002
       - TARIFF_URL=${TARIFF_URL:-http://tariff:3003}
+      - PURCHASING_URL=http://purchasing:3004
       - BOM_STORAGE_PATH=/data/boms
       - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
       - COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID:-}
@@ -55,6 +65,7 @@ services:
       - parser
       - enrichment
       - tariff
+      - purchasing
 
 volumes:
   bom-data:

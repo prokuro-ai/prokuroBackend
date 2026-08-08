@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use axum::body::Body;
+use axum::extract::rejection::JsonRejection;
 use axum::extract::Multipart;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -12,6 +13,9 @@ use analyze::{apply_tariff_results, finalize_analyze, merge, AnalyzeResult};
 use boms::handlers::{create_bom, delete_bom, get_bom, list_boms};
 use clients::enrichment::{EnrichInput, EnrichmentClient};
 use clients::parser::ParserClient;
+use clients::purchasing::{
+    PlaceOrderRequest, PurchasingClient, QuoteRequest,
+};
 use clients::tariff::{TariffClient, TariffInput};
 use state::AppState;
 
@@ -35,6 +39,10 @@ pub enum GatewayError {
     TariffError(String),
     #[error("tariff timed out")]
     TariffTimeout,
+    #[error("purchasing error: {0}")]
+    PurchasingError(String),
+    #[error("purchasing timed out")]
+    PurchasingTimeout,
 }
 
 pub fn app(state: AppState) -> Router {
@@ -42,6 +50,8 @@ pub fn app(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/v1/parse", post(parse_handler))
         .route("/v1/analyze", post(analyze_handler))
+        .route("/v1/purchase/quote", post(purchase_quote_handler))
+        .route("/v1/purchase/orders", post(purchase_orders_handler))
         .route("/v1/boms", get(list_boms).post(create_bom))
         .route("/v1/boms/{id}", get(get_bom).delete(delete_bom))
         .with_state(state)
@@ -223,6 +233,64 @@ async fn apply_tariff_overlay(merged: &mut AnalyzeResult) {
                 "message": error.to_string()
             }));
         }
+    }
+}
+
+async fn purchase_quote_handler(
+    payload: Result<Json<QuoteRequest>, JsonRejection>,
+) -> impl IntoResponse {
+    let request = match payload {
+        Ok(Json(request)) => request,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": error.body_text()})),
+            )
+                .into_response();
+        }
+    };
+
+    match PurchasingClient::from_env().quote(&request).await {
+        Ok(response) => Json(response).into_response(),
+        Err(GatewayError::PurchasingTimeout) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(json!({"error": "purchasing timed out"})),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": error.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn purchase_orders_handler(
+    payload: Result<Json<PlaceOrderRequest>, JsonRejection>,
+) -> impl IntoResponse {
+    let request = match payload {
+        Ok(Json(request)) => request,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": error.body_text()})),
+            )
+                .into_response();
+        }
+    };
+
+    match PurchasingClient::from_env().place_order(&request).await {
+        Ok(response) => Json(response).into_response(),
+        Err(GatewayError::PurchasingTimeout) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(json!({"error": "purchasing timed out"})),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": error.to_string()})),
+        )
+            .into_response(),
     }
 }
 
