@@ -98,15 +98,6 @@ pub enum EnrichSource {
     LiveMiss,
 }
 
-impl EnrichSource {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Cache => "Cache",
-            Self::LiveMiss => "LiveMiss",
-        }
-    }
-}
-
 /// Wire format returned by the enrichment service and consumed by the gateway.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnrichResult {

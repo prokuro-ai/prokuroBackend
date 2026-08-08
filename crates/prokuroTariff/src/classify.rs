@@ -470,16 +470,6 @@ pub fn classify_component(description: &str, category: Option<&str>) -> Classifi
     }
 }
 
-/// HTS codes referenced by the keyword table (for data-integrity tests).
-pub fn keyword_hts_codes() -> Vec<&'static str> {
-    KEYWORD_RULES
-        .iter()
-        .map(|rule| rule.hts_code)
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::{classify_component, ClassificationConfidence, LOW_CONFIDENCE_SURROUNDINGS_NOTE};

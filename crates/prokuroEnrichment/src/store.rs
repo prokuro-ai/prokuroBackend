@@ -17,7 +17,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use thiserror::Error;
 
 use crate::store_item::{item_to_result, result_to_item};
-use crate::types::{part_key, PartResult};
+use crate::types::PartResult;
 
 pub const PARTS_TABLE: &str = "prokuro-parts";
 pub const UNRESOLVED_TABLE: &str = "prokuro-unresolved";
@@ -223,17 +223,6 @@ impl PartStore {
             enqueued += 1;
         }
         Ok(enqueued)
-    }
-
-    /// Legacy helper used by NoMatch path historically; prefer enqueue_unresolved_many.
-    pub async fn log_unresolved(
-        &self,
-        mpn: &str,
-        manufacturer: Option<&str>,
-    ) -> Result<(), StoreError> {
-        let pk = part_key(mpn, manufacturer);
-        self.enqueue_unresolved_many(&[pk]).await?;
-        Ok(())
     }
 
     async fn has_unresolved(&self, pk: &str) -> Result<bool, StoreError> {

@@ -59,18 +59,3 @@ pub async fn process_one(
         }
     }
 }
-
-/// Cache-first: return existing DynamoDB snapshot if present, otherwise live lookup.
-pub async fn process_one_cache_first(
-    store: &PartStore,
-    provider: &dyn Provider,
-    query: &PartQuery,
-) -> Result<PartResult, String> {
-    let pk = query.part_key();
-    if let Some(part) = store.get_latest(&pk).await.map_err(|e| e.to_string())? {
-        metrics::digikey_cache_hit();
-        return Ok(part);
-    }
-    metrics::digikey_live_miss();
-    process_one(store, provider, query).await
-}
