@@ -6,6 +6,7 @@ members = [
     "crates/prokuroEnrichment",
     "crates/prokuroGateway",
     "crates/prokuroTariff",
+    "crates/prokuroPurchasing",
 ]
 
 [workspace.package]

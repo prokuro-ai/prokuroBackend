@@ -8,6 +8,7 @@ Rust backend for BOM parsing + enrichment + analyze API.
 - `prokuro-enrichment` (`:3002`) enriches parts (Digi-Key + DynamoDB current-row cache).
 - `prokuro-gateway` (`:3000`) exposes `POST /v1/analyze`.
 - `prokuro-tariff` (`:3003`) tariff overlay.
+- `prokuro-purchasing` (`:3004`) purchasing quote/order skeleton.
 
 ## Enrichment model (cache-first)
 

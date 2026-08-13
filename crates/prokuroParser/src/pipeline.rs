@@ -21,15 +21,6 @@ pub struct ParseStats {
 }
 
 #[derive(Debug, Serialize)]
-pub struct ParsedLineEvent {
-    pub mpn: Option<String>,
-    pub manufacturer: Option<String>,
-    pub quantity: Option<f64>,
-    pub refdes: Option<String>,
-    pub aml_candidates: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
 pub struct ParseResult {
     pub source_filename: String,
     pub sheet_name: Option<String>,
@@ -40,7 +31,6 @@ pub struct ParseResult {
     pub lines: Vec<BomLine>,
     pub warnings: Vec<ParseWarning>,
     pub stats: ParseStats,
-    pub flywheel_events: Vec<ParsedLineEvent>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -151,17 +141,6 @@ pub async fn parse_file_with_mapping(
         });
     }
 
-    let flywheel_events = lines
-        .iter()
-        .map(|l| ParsedLineEvent {
-            mpn: l.mpn.clone(),
-            manufacturer: l.manufacturer.clone(),
-            quantity: l.quantity,
-            refdes: l.refdes.clone(),
-            aml_candidates: l.aml_candidates.clone(),
-        })
-        .collect();
-
     let parsed_rows = lines.len();
 
     Ok(ParseResult {
@@ -178,7 +157,6 @@ pub async fn parse_file_with_mapping(
             parsed_rows,
             skipped_rows,
         },
-        flywheel_events,
     })
 }
 

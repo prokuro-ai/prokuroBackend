@@ -1,0 +1,28 @@
+[package]
+name = "prokuro-purchasing"
+description = "Distributor purchasing: quote and place orders via Digi-Key, Mouser, and later providers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "prokuro-purchasing"
+path = "src/main.rs"
+
+[dependencies]
+prokuro-types = { path = "../prokuroTypes" }
+axum = { version = "0.8" }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+async-trait = "0.1"
+
+[dev-dependencies]
+tower = "0.5"
+http-body-util = "0.1"
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
