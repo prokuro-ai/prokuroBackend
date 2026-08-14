@@ -13,6 +13,7 @@ use axum::{Json, Router};
 use serde_json::json;
 
 use prokuro_types::purchasing::{PlaceOrderRequest, ProviderId, QuoteRequest};
+use providers::{digikey_from_env, mouser_from_env};
 use types::PurchasingProvider;
 
 #[derive(Clone)]
@@ -123,8 +124,8 @@ async fn orders_handler(
 
 pub fn default_providers() -> HashMap<ProviderId, Arc<dyn PurchasingProvider>> {
     let mut providers: HashMap<ProviderId, Arc<dyn PurchasingProvider>> = HashMap::new();
-    let digikey = Arc::new(providers::DigiKeyPurchasingProvider);
-    let mouser = Arc::new(providers::MouserPurchasingProvider);
+    let digikey = digikey_from_env();
+    let mouser = mouser_from_env();
     providers.insert(digikey.id(), digikey);
     providers.insert(mouser.id(), mouser);
     providers
