@@ -9,7 +9,7 @@ use crate::auth::{authenticate, AuthService, AuthUser};
 use crate::billing::BillingService;
 use crate::boms::store::BomStore;
 use crate::team::TeamStore;
-use prokuro_types::purchasing::BillingPlan;
+use prokuro_types::purchasing::{BillingPlan, BillingStatus};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -54,7 +54,14 @@ impl AppState {
         }
         if let Some(billing) = &self.billing {
             if let Ok(status) = billing.status_for(user).await {
-                return status.plan;
+                // Paid plans win. Bare Free + none/canceled falls through to
+                // PROKURO_DEFAULT_PLAN so seat invites work before Stripe checkout.
+                if status.plan != BillingPlan::Free {
+                    return status.plan;
+                }
+                if !matches!(status.status, BillingStatus::None | BillingStatus::Canceled) {
+                    return status.plan;
+                }
             }
         }
         default_plan_from_env()

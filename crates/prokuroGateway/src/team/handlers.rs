@@ -41,7 +41,7 @@ pub async fn list_members(State(state): State<AppState>, headers: HeaderMap) -> 
             Json(json!({
                 "account_id": user.account_id,
                 "user_id": user.user_id,
-                "role": user.role,
+                "role": user.role.as_str(),
                 "plan": plan_slug(plan),
                 "seats": { "used": used, "limit": limits.seats },
                 "members": snapshot.members.iter().map(member_json).collect::<Vec<_>>(),
@@ -250,7 +250,7 @@ fn member_json(member: &MemberRecord) -> serde_json::Value {
     json!({
         "user_id": member.user_id,
         "email": member.email,
-        "role": member.role,
+        "role": member.role.as_str(),
         "created_at": member.created_at,
     })
 }
@@ -259,7 +259,7 @@ fn invite_json(invite: &InviteRecord) -> serde_json::Value {
     json!({
         "id": invite.id,
         "email": invite.email,
-        "role": invite.role,
+        "role": invite.role.as_str(),
         "invited_by": invite.invited_by,
         "expires_at": invite.expires_at,
         "created_at": invite.created_at,
