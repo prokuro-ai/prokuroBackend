@@ -713,6 +713,7 @@ mod tests {
             // Cognito unset; unit-test auth bypass uses Bearer test:<account_id>.
             auth: None,
             bom_store: Arc::new(store),
+            billing: None,
         };
         let app = crate::app(state);
 
@@ -741,6 +742,7 @@ mod tests {
         let state = AppState {
             auth: None,
             bom_store: Arc::new(BomStore::local(temp.path().to_path_buf())),
+            billing: None,
         };
         let app = crate::app(state);
 
