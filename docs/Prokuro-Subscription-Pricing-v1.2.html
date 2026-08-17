@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Prokuro Subscription Pricing v1.2 — Revised Decision Brief</title>
+  <style>
+    @page {
+      size: letter;
+      margin: 0.6in 0.62in 0.7in 0.62in;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; color: #111; background: #fff;
+      font: 10pt/1.4 "Georgia", "Times New Roman", serif;
+    }
+    h1, h2, h3, .sans, .badge, table, .meta, .json, .kicker {
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    }
+    h1 { font-size: 18.5pt; font-weight: 700; letter-spacing: -0.02em; line-height: 1.12; margin: 0 0 6pt; }
+    h2 {
+      font-size: 11pt; font-weight: 700; margin: 13pt 0 6pt; padding-bottom: 3pt;
+      border-bottom: 1.25pt solid #111; page-break-after: avoid;
+    }
+    h3 { font-size: 9.5pt; font-weight: 700; margin: 8pt 0 4pt; page-break-after: avoid; }
+    p { margin: 0 0 7pt; }
+    .kicker { font-size: 8pt; letter-spacing: 0.14em; text-transform: uppercase; color: #555; font-weight: 600; }
+    .meta { font-size: 8.5pt; color: #444; margin: 0; }
+    .badge {
+      display: inline-block; font-size: 8pt; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; border: 1.25pt solid #111; padding: 2pt 7pt; vertical-align: middle;
+    }
+    .rule { border: 0; border-top: 1.5pt solid #111; margin: 8pt 0 10pt; }
+    .exec { font-size: 10.5pt; line-height: 1.38; margin: 0 0 6pt; }
+    .tiers { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6pt; margin: 8pt 0 10pt; }
+    .tier { border: 1pt solid #111; padding: 7pt 8pt 8pt; page-break-inside: avoid; }
+    .tier.ent { background: #111; color: #fff; }
+    .tier.ent .sub, .tier.ent .line { color: #ddd; }
+    .tier .name { font-size: 8pt; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+    .tier .price { font-size: 13.5pt; font-weight: 700; letter-spacing: -0.03em; margin: 2pt 0 1pt; line-height: 1.1; }
+    .tier .sub { font-size: 7.5pt; color: #444; margin: 0 0 5pt; }
+    .tier .line { font-size: 8pt; margin: 0; line-height: 1.3; }
+    table { width: 100%; border-collapse: collapse; font-size: 7.4pt; margin: 0 0 7pt; page-break-inside: avoid; }
+    th, td { border-bottom: 0.5pt solid #ccc; padding: 3pt 4pt; text-align: left; vertical-align: top; }
+    thead th { border-bottom: 1.25pt solid #111; font-weight: 700; font-size: 6.8pt; text-transform: uppercase; letter-spacing: 0.03em; }
+    td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    tbody tr:last-child td { border-bottom: 1pt solid #111; }
+    ul { margin: 0 0 7pt; padding-left: 16pt; }
+    li { margin: 0 0 2.5pt; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12pt; }
+    .callout { border: 1pt solid #111; padding: 7pt 9pt; margin: 0 0 8pt; page-break-inside: avoid; }
+    .callout strong { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 8.5pt; }
+    .json {
+      font: 6.4pt/1.3 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      background: #f4f4f4; border: 0.5pt solid #ddd; padding: 7pt 8pt; white-space: pre;
+      overflow: hidden; margin: 0 0 7pt; page-break-inside: avoid;
+    }
+    .foot {
+      margin-top: 10pt; padding-top: 6pt; border-top: 0.5pt solid #999;
+      font-size: 7.3pt; color: #555; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    }
+    .ol-tight { margin: 0 0 7pt; padding-left: 16pt; }
+    .ol-tight li { margin: 0 0 3pt; }
+    .keep { page-break-inside: avoid; }
+    @media screen { body { max-width: 8.5in; margin: 24px auto; padding: 0 24px 48px; } }
+    @media print { body { max-width: none; margin: 0; padding: 0; } a { text-decoration: none; color: inherit; } }
+  </style>
+</head>
+<body>
+
+  <p class="kicker">Internal decision brief · supersedes v1.1</p>
+  <h1>Prokuro Subscription Pricing v1.2 — Revised Decision Brief</h1>
+  <p class="meta">
+    Date: 2026-08-15 &nbsp;·&nbsp; Status: <span class="badge">Locked (v1.2)</span>
+    &nbsp;·&nbsp; Self-serve prices unchanged: Growth $149 / Scale $399.
+  </p>
+  <hr class="rule" />
+
+  <h2>1. Direct answers (why this revision exists)</h2>
+  <p class="exec"><strong>Yes — enable purchase on Free.</strong> There is no good demerit. Blocking buy was an old upgrade wedge. A hardware buyer who cannot try purchasing does not feel the product. Abuse is quote-scraping, not “they placed two Digi-Key orders.” Cap Free at 5 purchasing actions / month (max 2 orders when ordering is on). Paid gets 40 / 200. Flip <span class="sans">can_purchase</span> to true on Free. Today’s deploy still has Digi-Key ordering off — Free can use the quote path when it is live; orders inherit the same cap later.</p>
+  <p><strong>Yes — ship an Enterprise sales plan</strong> for OEMs above Scale. v1/v1.1 hid this as “off the public grid.” That reads as “we don’t sell to large companies.” Enterprise is a real fourth offer: custom annual, invoice, SSO, limits above Scale. Not a Stripe self-serve SKU.</p>
+  <p><strong>We do not delete data.</strong> v1 said 14-day Free delete. v1.1 changed the policy to keep-forever but still labeled a table row like “retention,” which looked unchanged. v1.2: there is no retention/delete policy. BOMs and MPN snapshots stay in S3/Dynamo. What differs by tier is <em>how often we refresh</em> (Free weekly, paid daily, Enterprise daily + priority). Extra BOMs stay stored; they just drop out of the monitored set.</p>
+
+  <h2>2. Four offers</h2>
+  <div class="tiers">
+    <div class="tier">
+      <div class="name sans">Free</div>
+      <div class="price">$0</div>
+      <p class="sub">Purchase on · 5 actions/mo</p>
+      <p class="line">One board, analyst, weekly refresh, try buying. Data kept. Upgrade = daily monitoring + volume.</p>
+    </div>
+    <div class="tier">
+      <div class="name sans">Growth</div>
+      <div class="price">$149<span style="font-size:8.5pt;font-weight:600">/mo</span></div>
+      <p class="sub">$1,490/yr · Stripe</p>
+      <p class="line">Working buyer. 10 live boards, daily refresh, Bedrock on, 40 purchase actions.</p>
+    </div>
+    <div class="tier">
+      <div class="name sans">Scale</div>
+      <div class="price">$399<span style="font-size:8.5pt;font-weight:600">/mo</span></div>
+      <p class="sub">$3,990/yr · Stripe</p>
+      <p class="line">Small procurement desk. 50 live boards, daily refresh, 200 purchase actions.</p>
+    </div>
+    <div class="tier ent">
+      <div class="name sans">Enterprise</div>
+      <div class="price">Custom</div>
+      <p class="sub">Annual contract · sales</p>
+      <p class="line">OEM / EMS above Scale. SSO, invoice, SLA, custom BOM and API budgets. Not in Stripe Checkout.</p>
+    </div>
+  </div>
+  <p>Public self-serve grid: Free / Growth / Scale. Enterprise is on the same page as “Contact sales” — not hidden, not a fourth self-serve price. Packaging remains live BOMs + line/analysis caps. Seats are a ceiling. No metered overages. Do not headline “quotes/mo” until buying UX ships; enforce a single purchasing-actions pool internally.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Limit</th>
+        <th class="n">Free</th>
+        <th class="n">Growth</th>
+        <th class="n">Scale</th>
+        <th class="n">Enterprise</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Price</td><td class="n">$0</td><td class="n">$149/mo</td><td class="n">$399/mo</td><td class="n">Custom annual</td></tr>
+      <tr><td>Seats (ceiling)</td><td class="n">1</td><td class="n">2</td><td class="n">5</td><td class="n">25+</td></tr>
+      <tr><td>Active BOMs (refreshed)</td><td class="n">1</td><td class="n">10</td><td class="n">50</td><td class="n">200+</td></tr>
+      <tr><td>Max lines / BOM</td><td class="n">100</td><td class="n">500</td><td class="n">2,000</td><td class="n">10,000+</td></tr>
+      <tr><td>BOM lines / month</td><td class="n">300</td><td class="n">2,500</td><td class="n">15,000</td><td class="n">100,000+</td></tr>
+      <tr><td>Analyses / month</td><td class="n">3</td><td class="n">20</td><td class="n">100</td><td class="n">Custom</td></tr>
+      <tr><td>Purchasing actions / month</td><td class="n">5</td><td class="n">40</td><td class="n">200</td><td class="n">Custom</td></tr>
+      <tr><td>&nbsp;&nbsp;max orders (when ordering on)</td><td class="n">2</td><td class="n">10</td><td class="n">50</td><td class="n">Custom</td></tr>
+      <tr><td>can_purchase</td><td class="n">true</td><td class="n">true</td><td class="n">true</td><td class="n">true</td></tr>
+      <tr><td>Store BOMs + MPNs</td><td class="n">forever</td><td class="n">forever</td><td class="n">forever</td><td class="n">forever</td></tr>
+      <tr><td>Availability refresh</td><td class="n">weekly</td><td class="n">daily</td><td class="n">daily</td><td class="n">daily + priority</td></tr>
+      <tr><td>Delete after N days</td><td class="n">no</td><td class="n">no</td><td class="n">no</td><td class="n">no</td></tr>
+      <tr><td>Concurrent analyses</td><td class="n">1</td><td class="n">1</td><td class="n">3</td><td class="n">Custom</td></tr>
+      <tr><td>New unique MPN lookups / day</td><td class="n">200</td><td class="n">1,000</td><td class="n">5,000</td><td class="n">Custom</td></tr>
+      <tr><td>Bedrock</td><td class="n">Haiku, capped</td><td class="n">On</td><td class="n">On</td><td class="n">On + higher budget</td></tr>
+      <tr><td>SSO / SLA / invoice</td><td class="n">no</td><td class="n">no</td><td class="n">no</td><td class="n">yes</td></tr>
+    </tbody>
+  </table>
+  <p class="meta">lines/month = sum of lines in each analysis (re-analyze counts). Active BOM = in the refreshed set. Boards above that stay stored, not refreshed, until swapped in or upgraded. Purchasing action = quote or order call. Ordering is off in current deploy (<span class="sans">DIGIKEY_ORDERING_ENABLED=false</span>); the order sub-cap is dormant until that flag is on. Enterprise floor is above Scale ($3,990/yr); typical shape is annual invoice, NET-30, DPA, named onboarding. No public dollar — sales quotes. Not created as a Stripe Checkout price.</p>
+
+  <h2>3. Free purchase — why there is no demerit</h2>
+  <p>Cost: Digi-Key/Mouser lookups are quota, not cash. Five actions/month cannot move AWS. Conversion: trying a real buy is stronger than a locked button. Support: fewer “why can’t I purchase on Free?” tickets. Remaining risk is scraping — 5 actions + 1 org/domain + work email stops farms. If Free purchasing-action 402s spike with zero analyses, tighten to 3, don’t flip the boolean back off.</p>
+
+  <h2>4. Enterprise sales plan</h2>
+  <p>Who: 25+ people in procurement/engineering, 200+ live BOMs, or SSO/security review. How sold: website “Contact sales,” not Checkout. Commercial: custom annual, invoice, floor above Scale. Product: everything in Scale plus custom line/BOM/API budgets, daily+priority refresh, higher Bedrock budget, SSO, SLA, DPA, audit log. Implementation: <span class="sans">plan=enterprise</span> set by ops/Stripe Billing (invoice) or a flag on the billing Dynamo item — no fourth self-serve price ID. App treats unknown high entitlements as Enterprise, not Free.</p>
+
+  <h2>5. Data policy (not “retention”)</h2>
+  <p><strong>Keep all account BOMs and all MPN snapshots. Do not TTL-delete for plan or inactivity.</strong> Build the component network. Daily job refreshes paid active-BOM MPNs first, then leftover Digi-Key quota for catalog freshness, then Free’s weekly 1-BOM pass. Stale Free UI: banner, data still there. Cancel/downgrade: keep files, drop to Free refresh + 5 purchase actions. S3: expire <em>noncurrent versions</em> at 30 days only (cost hygiene), never the current BOM.</p>
+
+  <h2>6. Digi-Key 50,000/day · 480/min</h2>
+  <p>Contract on <span class="sans">billing@prokuro.ai</span>. Code still has 1,000/day and 120/min in <span class="sans">rate_limit.rs</span> — update that first. Global Free intake 5,000/day (10% of 50k). Per-account new MPN/day: Free 200, Growth 1,000, Scale 5,000, Enterprise custom.</p>
+
+  <h2>7. Bedrock</h2>
+  <p>Growth, Scale, Enterprise: on (Haiku default). Free: Haiku only, no recursive alternates, inside 3 analyses / 300 lines, max 50k tokens/analysis. Do not run Sonnet on every line. Alarm Bedrock spend.</p>
+
+  <h2>8. Cost snapshot (order of magnitude, USD)</h2>
+  <p>Lights-on ~$50–100/mo (base ~$70). One Growth covers baseline. Free purchase does not change that. Bedrock on paid is the new variable (~$8–12 Growth, ~$30–50 busy Scale). Mix below is self-serve only (50/40/10 Free/Growth/Scale). Enterprise is upside on top, not in this table.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>N self-serve accounts</th>
+        <th class="n">Revenue</th>
+        <th class="n">Infra+Bedrock</th>
+        <th class="n">Stripe</th>
+        <th class="n">Contribution</th>
+        <th class="n">Margin</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>10</td><td class="n">$996</td><td class="n">~$120</td><td class="n">~$30</td><td class="n">~$850</td><td class="n">~85%</td></tr>
+      <tr><td>50</td><td class="n">$4,975</td><td class="n">~$350</td><td class="n">~$154</td><td class="n">~$4,470</td><td class="n">~90%</td></tr>
+      <tr><td>200</td><td class="n">$19,900</td><td class="n">~$1,200</td><td class="n">~$617</td><td class="n">~$18,100</td><td class="n">~91%</td></tr>
+      <tr><td>1,000</td><td class="n">$99,500</td><td class="n">~$6,000</td><td class="n">~$3,055</td><td class="n">~$90,400</td><td class="n">~91%</td></tr>
+    </tbody>
+  </table>
+
+  <h2>9. Stripe + entitlements</h2>
+  <p><strong>Keep:</strong> Growth <span class="sans">price_1U4Mrn6OM1R4nep11h3o5N5N</span> ($149); Scale <span class="sans">price_1U4MsS6OM1R4nep1VdxKcCPb</span> ($399). <strong>Create:</strong> growth_annual $1,490; scale_annual $3,990. <strong>Do not create</strong> Free or Enterprise Checkout prices. Free = default. Enterprise = sales invoice / Billing, <span class="sans">plan=enterprise</span> on the Dynamo row. Change <span class="sans">status_from_record</span>: stop tying can_purchase to “not Free.”</p>
+  <pre class="json">{
+  "free":       { "can_purchase": true,  "purchasing_actions_per_month": 5,   "orders_per_month": 2,  "active_boms": 1,   "max_lines_per_bom": 100,   "lines_per_month": 300,    "analyses_per_month": 3,   "refresh": "weekly",          "unique_mpn_lookups_per_day": 200,  "bedrock": "haiku_capped", "delete_data": false },
+  "growth":     { "can_purchase": true,  "purchasing_actions_per_month": 40,  "orders_per_month": 10, "active_boms": 10,  "max_lines_per_bom": 500,   "lines_per_month": 2500,   "analyses_per_month": 20,  "refresh": "daily",           "unique_mpn_lookups_per_day": 1000, "bedrock": "on",           "delete_data": false },
+  "scale":      { "can_purchase": true,  "purchasing_actions_per_month": 200, "orders_per_month": 50, "active_boms": 50,  "max_lines_per_bom": 2000,  "lines_per_month": 15000,  "analyses_per_month": 100, "refresh": "daily",           "unique_mpn_lookups_per_day": 5000, "bedrock": "on",           "delete_data": false },
+  "enterprise": { "can_purchase": true,  "purchasing_actions_per_month": null, "orders_per_month": null, "active_boms": 200, "max_lines_per_bom": 10000, "lines_per_month": 100000, "analyses_per_month": null, "refresh": "daily_priority",  "unique_mpn_lookups_per_day": null, "bedrock": "on_high",      "delete_data": false, "sso": true, "sales_led": true }
+}</pre>
+  <p class="meta">null = custom, set on the contract. global_free_digikey_per_day = 5000.</p>
+
+  <h2>10. Ship order</h2>
+  <ol class="ol-tight">
+    <li>Rate limiter 50,000/day · 480/min (code is still 1k/120).</li>
+    <li>Entitlements + 402s. Free can_purchase=true with 5-action cap. Keep all data. Weekly Free / daily paid refresh. Bedrock on paid; Haiku-capped Free.</li>
+    <li>BillingPlan::Enterprise (ops-set). Website: three self-serve cards + Contact sales.</li>
+    <li>Annual Stripe prices + checkout interval.</li>
+    <li>Do not advertise Free until 1–2 are live.</li>
+  </ol>
+
+  <h2>11. 30-day metrics and red flags</h2>
+  <div class="two keep">
+    <div>
+      <h3>Counters</h3>
+      <ul>
+        <li>Free → paid among Free with ≥1 analysis (target ≥8%)</li>
+        <li>402s by cap (lines, analyses, purchasing actions)</li>
+        <li>Free purchasing actions with 0 analyses (scrape signal)</li>
+        <li>Stale-banner → Growth checkout</li>
+        <li>Enterprise demo requests vs self-serve</li>
+        <li>AWS bill vs ~$70; Bedrock $; Digi-Key 429s</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Red flags</h3>
+      <p><strong>Tighten Free actions immediately</strong> if scrape farms, Digi-Key 429s starve paid sync, or bill &gt;$150 with &lt;20 paid. Do not turn can_purchase back off. <strong>Raise self-serve price</strong> only after 30 days if conversion &gt;25% and paid users &gt;80% of caps. If conversion &lt;5%, tighten Free volume/refresh copy, not dollars.</p>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>Locked v1.2.</strong> Free can buy (5 actions). Data is never deleted for plan reasons. Enterprise is a sales-led fourth offer. Growth $149 and Scale $399 unchanged.
+  </div>
+
+  <div class="foot">
+    Gateway http://prokuro-backend-2059790516.us-west-2.elb.amazonaws.com
+    · App https://main.douep9i9pzude.amplifyapp.com
+    · Digi-Key contract 50,000/day, 480/min on billing@prokuro.ai — not yet in rate_limit.rs.
+  </div>
+
+</body>
+</html>

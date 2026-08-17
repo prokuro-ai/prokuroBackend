@@ -11,6 +11,12 @@ use prokuro_types::purchasing::{
 pub enum PurchasingError {
     #[error("provider error: {0}")]
     Provider(String),
+    #[error("not configured: {0}")]
+    NotConfigured(String),
+    #[error("auth error: {0}")]
+    Auth(String),
+    #[error("request error: {0}")]
+    Request(String),
 }
 
 #[async_trait]

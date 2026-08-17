@@ -138,6 +138,20 @@ pub async fn create_bom(
         Err(response) => return response,
     };
 
+    if let Some(billing) = &state.billing {
+        let existing = match state.bom_store.list_boms(&user.account_id).await {
+            Ok(boms) => boms.len() as u32,
+            Err(error) => return store_error_response(error).into_response(),
+        };
+        let line_count = upload.analyze.summary.total as u32;
+        if let Err(cap) = billing
+            .ensure_bom_create(&user, existing, line_count)
+            .await
+        {
+            return cap.into_response();
+        }
+    }
+
     let input = CreateBomInput {
         account_id: user.account_id,
         email: user.email,

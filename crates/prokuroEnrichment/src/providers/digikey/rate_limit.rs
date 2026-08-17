@@ -2,8 +2,8 @@
 //!
 //! Required env (no defaults — set to match your Digi-Key approved quotas):
 //! - `DIGIKEY_MAX_CONCURRENCY`
-//! - `DIGIKEY_MAX_PER_MINUTE`
-//! - `DIGIKEY_MAX_PER_DAY`
+//! - `DIGIKEY_MAX_PER_MINUTE` (billing@prokuro.ai: 480)
+//! - `DIGIKEY_MAX_PER_DAY` (billing@prokuro.ai: 50000)
 //!
 //! Caps can rise at runtime from Digi-Key `X-BurstLimit-Limit` / `X-RateLimit-Limit` headers.
 

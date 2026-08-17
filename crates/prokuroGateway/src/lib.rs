@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::Multipart;
-use axum::http::{header, Method, StatusCode};
+use axum::extract::{Multipart, State};
+use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
@@ -12,21 +12,26 @@ use serde_json::json;
 use tower_http::cors::{Any, CorsLayer};
 
 use analyze::{apply_tariff_results, finalize_analyze, merge, AnalyzeResult};
+use auth::authenticate;
+use billing::{
+    billing_checkout, billing_portal, billing_status, billing_webhook,
+};
 use boms::handlers::{
     add_line, create_bom, delete_bom, delete_line, get_bom, list_boms, patch_line, put_bom,
 };
 use clients::enrichment::{EnrichInput, EnrichmentClient};
 use clients::parser::ParserClient;
-use clients::purchasing::{
-    PlaceOrderRequest, PurchasingClient, QuoteRequest,
-};
+use clients::purchasing::{PlaceOrderRequest, PurchasingClient, QuoteRequest};
 use clients::tariff::{TariffClient, TariffInput};
+use prokuro_types::purchasing::{PlaceOrderResponse, PurchaseStatus, QuoteResponse};
 use state::AppState;
 
 pub mod analyze;
 pub mod auth;
+pub mod billing;
 pub mod boms;
 pub mod clients;
+pub mod entitlements;
 pub mod state;
 
 #[derive(Debug, thiserror::Error)]
@@ -68,6 +73,10 @@ pub fn app(state: AppState) -> Router {
         .route("/v1/analyze", post(analyze_handler))
         .route("/v1/purchase/quote", post(purchase_quote_handler))
         .route("/v1/purchase/orders", post(purchase_orders_handler))
+        .route("/v1/billing/status", get(billing_status))
+        .route("/v1/billing/checkout", post(billing_checkout))
+        .route("/v1/billing/portal", post(billing_portal))
+        .route("/v1/billing/webhook", post(billing_webhook))
         .route("/v1/boms", get(list_boms).post(create_bom))
         .route(
             "/v1/boms/{id}",
@@ -311,8 +320,15 @@ async fn apply_tariff_overlay(merged: &mut AnalyzeResult) {
 }
 
 async fn purchase_quote_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
     payload: Result<Json<QuoteRequest>, JsonRejection>,
 ) -> impl IntoResponse {
+    let user = match authenticate(state.auth.as_ref(), &headers).await {
+        Ok(user) => user,
+        Err(response) => return response.into_response(),
+    };
+
     let request = match payload {
         Ok(Json(request)) => request,
         Err(error) => {
@@ -323,6 +339,34 @@ async fn purchase_quote_handler(
                 .into_response();
         }
     };
+
+    if let Some(billing) = &state.billing {
+        if let Err(cap) = billing.ensure_purchasing_action(&user, false).await {
+            let message = format!("plan cap exceeded: {}", cap.cap);
+            let status = cap
+                .purchase_status
+                .unwrap_or(PurchaseStatus::CapExceeded);
+            return Json(QuoteResponse {
+                provider: request.provider,
+                status,
+                lines: Vec::new(),
+                currency: None,
+                subtotal: None,
+                message: Some(message),
+            })
+            .into_response();
+        }
+    } else if billing_required_env() {
+        return Json(QuoteResponse {
+            provider: request.provider,
+            status: PurchaseStatus::RequiresSubscription,
+            lines: Vec::new(),
+            currency: None,
+            subtotal: None,
+            message: Some("billing not configured".into()),
+        })
+        .into_response();
+    }
 
     match PurchasingClient::from_env().quote(&request).await {
         Ok(response) => Json(response).into_response(),
@@ -340,8 +384,15 @@ async fn purchase_quote_handler(
 }
 
 async fn purchase_orders_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
     payload: Result<Json<PlaceOrderRequest>, JsonRejection>,
 ) -> impl IntoResponse {
+    let user = match authenticate(state.auth.as_ref(), &headers).await {
+        Ok(user) => user,
+        Err(response) => return response.into_response(),
+    };
+
     let request = match payload {
         Ok(Json(request)) => request,
         Err(error) => {
@@ -352,6 +403,30 @@ async fn purchase_orders_handler(
                 .into_response();
         }
     };
+
+    if let Some(billing) = &state.billing {
+        if let Err(cap) = billing.ensure_purchasing_action(&user, true).await {
+            let message = format!("plan cap exceeded: {}", cap.cap);
+            let status = cap
+                .purchase_status
+                .unwrap_or(PurchaseStatus::CapExceeded);
+            return Json(PlaceOrderResponse {
+                provider: request.provider,
+                status,
+                distributor_order_id: None,
+                message: Some(message),
+            })
+            .into_response();
+        }
+    } else if billing_required_env() {
+        return Json(PlaceOrderResponse {
+            provider: request.provider,
+            status: PurchaseStatus::RequiresSubscription,
+            distributor_order_id: None,
+            message: Some("billing not configured".into()),
+        })
+        .into_response();
+    }
 
     match PurchasingClient::from_env().place_order(&request).await {
         Ok(response) => Json(response).into_response(),
@@ -366,6 +441,12 @@ async fn purchase_orders_handler(
         )
             .into_response(),
     }
+}
+
+fn billing_required_env() -> bool {
+    std::env::var("BILLING_REQUIRED")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 pub async fn build_app_state() -> Arc<AppState> {

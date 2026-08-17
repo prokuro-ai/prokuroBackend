@@ -44,6 +44,12 @@ services:
       - "3004:3004"
     environment:
       - PORT=3004
+      - DIGIKEY_CLIENT_ID=${DIGIKEY_CLIENT_ID:-}
+      - DIGIKEY_CLIENT_SECRET=${DIGIKEY_CLIENT_SECRET:-}
+      - DIGIKEY_ACCOUNT_ID=${DIGIKEY_ACCOUNT_ID:-}
+      - DIGIKEY_ORDERING_ENABLED=${DIGIKEY_ORDERING_ENABLED:-false}
+      - MOUSER_API_KEY=${MOUSER_API_KEY:-}
+      - MOUSER_ORDERING_ENABLED=${MOUSER_ORDERING_ENABLED:-false}
 
   gateway:
     build:
@@ -62,6 +68,12 @@ services:
       - COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID:-}
       - COGNITO_REGION=${COGNITO_REGION:-us-west-2}
       - AWS_REGION=${AWS_REGION:-us-west-2}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - STRIPE_PRICE_GROWTH=${STRIPE_PRICE_GROWTH:-}
+      - STRIPE_PRICE_SCALE=${STRIPE_PRICE_SCALE:-}
+      - BILLING_TABLE=${BILLING_TABLE:-prokuro-billing}
+      - BILLING_REQUIRED=${BILLING_REQUIRED:-false}
     volumes:
       - bom-data:/data/boms
     depends_on:
