@@ -1,4 +1,4 @@
-//! Digi-Key request rate limiter (120/min, 1000/day).
+//! Digi-Key request rate limiter (480/min, 50_000/day — billing@prokuro.ai contract).
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -8,8 +8,8 @@ use chrono::{Datelike, Utc};
 
 use crate::types::ProviderError;
 
-const MAX_PER_MINUTE: usize = 120;
-const MAX_PER_DAY: u32 = 1000;
+const MAX_PER_MINUTE: usize = 480;
+const MAX_PER_DAY: u32 = 50_000;
 
 pub struct RateLimiter {
     minute: tokio::sync::Mutex<VecDeque<Instant>>,

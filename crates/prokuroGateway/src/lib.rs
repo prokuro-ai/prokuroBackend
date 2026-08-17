@@ -27,6 +27,7 @@ pub mod auth;
 pub mod billing;
 pub mod boms;
 pub mod clients;
+pub mod entitlements;
 pub mod state;
 
 #[derive(Debug, thiserror::Error)]
@@ -266,14 +267,18 @@ async fn purchase_quote_handler(
     };
 
     if let Some(billing) = &state.billing {
-        if let Err(status) = billing.ensure_can_purchase(&user).await {
+        if let Err(cap) = billing.ensure_purchasing_action(&user, false).await {
+            let message = format!("plan cap exceeded: {}", cap.cap);
+            let status = cap
+                .purchase_status
+                .unwrap_or(PurchaseStatus::CapExceeded);
             return Json(QuoteResponse {
                 provider: request.provider,
                 status,
                 lines: Vec::new(),
                 currency: None,
                 subtotal: None,
-                message: Some("active Prokuro subscription required".into()),
+                message: Some(message),
             })
             .into_response();
         }
@@ -326,12 +331,16 @@ async fn purchase_orders_handler(
     };
 
     if let Some(billing) = &state.billing {
-        if let Err(status) = billing.ensure_can_purchase(&user).await {
+        if let Err(cap) = billing.ensure_purchasing_action(&user, true).await {
+            let message = format!("plan cap exceeded: {}", cap.cap);
+            let status = cap
+                .purchase_status
+                .unwrap_or(PurchaseStatus::CapExceeded);
             return Json(PlaceOrderResponse {
                 provider: request.provider,
                 status,
                 distributor_order_id: None,
-                message: Some("active Prokuro subscription required".into()),
+                message: Some(message),
             })
             .into_response();
         }

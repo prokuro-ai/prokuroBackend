@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Prokuro Subscription Pricing v1 — Reviewed Decision Brief</title>
+  <style>
+    @page {
+      size: letter;
+      margin: 0.65in 0.7in 0.75in 0.7in;
+      @bottom-center {
+        content: "Prokuro Subscription Pricing v1  ·  LOCKED  ·  2026-08-14  ·  " counter(page);
+        font: 8pt/1.2 "Helvetica Neue", Helvetica, Arial, sans-serif;
+        color: #666;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      color: #111;
+      background: #fff;
+      font: 10pt/1.45 "Georgia", "Times New Roman", serif;
+    }
+    h1, h2, h3, .sans, .badge, table, .meta, .json, .kicker, .cover-title {
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    }
+    h1 { font-size: 20pt; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; margin: 0 0 6pt; }
+    h2 {
+      font-size: 11.5pt;
+      font-weight: 700;
+      margin: 16pt 0 8pt;
+      padding-bottom: 3pt;
+      border-bottom: 1.25pt solid #111;
+      page-break-after: avoid;
+    }
+    h3 { font-size: 10pt; font-weight: 700; margin: 10pt 0 4pt; page-break-after: avoid; }
+    p { margin: 0 0 8pt; }
+    .kicker { font-size: 8pt; letter-spacing: 0.14em; text-transform: uppercase; color: #555; font-weight: 600; }
+    .meta { font-size: 8.5pt; color: #444; margin: 0; }
+    .badge {
+      display: inline-block;
+      font-size: 8pt;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      border: 1.25pt solid #111;
+      padding: 2pt 7pt;
+      vertical-align: middle;
+    }
+    .rule { border: 0; border-top: 1.5pt solid #111; margin: 10pt 0 12pt; }
+    .exec {
+      font-size: 11pt;
+      line-height: 1.4;
+      margin: 0 0 4pt;
+    }
+    .tiers {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8pt;
+      margin: 8pt 0 12pt;
+    }
+    .tier {
+      border: 1pt solid #111;
+      padding: 8pt 9pt 9pt;
+      page-break-inside: avoid;
+    }
+    .tier .name { font-size: 9pt; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+    .tier .price { font-size: 16pt; font-weight: 700; letter-spacing: -0.03em; margin: 2pt 0 1pt; line-height: 1.1; }
+    .tier .sub { font-size: 8pt; color: #444; margin: 0 0 6pt; }
+    .tier .line { font-size: 8.5pt; margin: 0; line-height: 1.35; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 8pt;
+      margin: 0 0 8pt;
+      page-break-inside: avoid;
+    }
+    th, td {
+      border-bottom: 0.5pt solid #ccc;
+      padding: 3.5pt 5pt;
+      text-align: left;
+      vertical-align: top;
+    }
+    thead th {
+      border-bottom: 1.25pt solid #111;
+      font-weight: 700;
+      font-size: 7.5pt;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    tbody tr:last-child td { border-bottom: 1pt solid #111; }
+    ul { margin: 0 0 8pt; padding-left: 16pt; }
+    li { margin: 0 0 3pt; }
+    .two {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12pt;
+    }
+    .callout {
+      border: 1pt solid #111;
+      padding: 8pt 10pt;
+      margin: 0 0 10pt;
+      page-break-inside: avoid;
+    }
+    .callout strong { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 8.5pt; }
+    .json {
+      font: 7pt/1.35 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      background: #f4f4f4;
+      border: 0.5pt solid #ddd;
+      padding: 8pt 10pt;
+      white-space: pre;
+      overflow: hidden;
+      margin: 0 0 8pt;
+      page-break-inside: avoid;
+    }
+    .foot {
+      margin-top: 14pt;
+      padding-top: 6pt;
+      border-top: 0.5pt solid #999;
+      font-size: 7.5pt;
+      color: #555;
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    }
+    .foot a { color: #111; }
+    .ol-tight { margin: 0 0 8pt; padding-left: 16pt; }
+    .ol-tight li { margin: 0 0 4pt; }
+    .keep { page-break-inside: avoid; }
+    @media screen {
+      body { max-width: 8.5in; margin: 24px auto; padding: 0 28px 48px; }
+    }
+    @media print {
+      body { max-width: none; margin: 0; padding: 0; }
+      a { text-decoration: none; color: inherit; }
+    }
+  </style>
+</head>
+<body>
+
+  <p class="kicker">Internal decision brief</p>
+  <h1>Prokuro Subscription Pricing v1 — Reviewed Decision Brief</h1>
+  <p class="meta">
+    Date: 2026-08-14 &nbsp;·&nbsp; Status: <span class="badge">Locked</span>
+    &nbsp;·&nbsp; Do not reopen pricing. Do not change $149 / $399.
+  </p>
+  <hr class="rule" />
+
+  <h2>1. Executive summary</h2>
+  <p class="exec">Keep Growth at $149/mo and Scale at $399/mo. Add a real Free tier with hard volume caps. Package on live BOMs plus a monthly line cap — not seats as the SKU, and not metered overages. Free proves the analyst on one small board; Growth is the working buyer (quotes); Scale is the desk (volume and orders when enabled). Enterprise stays sales-led and off the public grid. Do not advertise Free until caps, paid-priority Digi-Key, Free sync exclusion, and 402s are live.</p>
+
+  <h2>2. Public tiers</h2>
+  <div class="tiers">
+    <div class="tier">
+      <div class="name sans">Free</div>
+      <div class="price">$0</div>
+      <p class="sub">No Stripe product</p>
+      <p class="line">Run one real board through the analyst. Pay for volume or purchasing.</p>
+    </div>
+    <div class="tier">
+      <div class="name sans">Growth</div>
+      <div class="price">$149<span style="font-size:9pt;font-weight:600">/mo</span></div>
+      <p class="sub">$1,490/yr (10× monthly)</p>
+      <p class="line">For the buyer who owns a handful of live boards and needs distributor quotes.</p>
+    </div>
+    <div class="tier">
+      <div class="name sans">Scale</div>
+      <div class="price">$399<span style="font-size:9pt;font-weight:600">/mo</span></div>
+      <p class="sub">$3,990/yr (10× monthly)</p>
+      <p class="line">For a small procurement team: more boards, purchasing, year of history.</p>
+    </div>
+  </div>
+  <p>Commercial gate already correct: Free <strong>can_purchase=false</strong>; quotes and orders require a paid active plan. Missing today: real Free semantics and volume limits. Growth and Scale are the same SKU shape at two prices — differentiate by limits and value, not by cutting dollars. Do not degrade Free analysis quality; cap volume. Quotes and orders stay fully off Free.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Limit</th>
+        <th class="n">Free</th>
+        <th class="n">Growth</th>
+        <th class="n">Scale</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Seats (ceiling)</td><td class="n">1</td><td class="n">2</td><td class="n">5</td></tr>
+      <tr><td>Active BOMs</td><td class="n">1</td><td class="n">10</td><td class="n">50</td></tr>
+      <tr><td>Max lines / BOM</td><td class="n">100</td><td class="n">500</td><td class="n">2,000</td></tr>
+      <tr><td>BOM lines / month</td><td class="n">300</td><td class="n">2,500</td><td class="n">15,000</td></tr>
+      <tr><td>Analyses / month</td><td class="n">3</td><td class="n">20</td><td class="n">100</td></tr>
+      <tr><td>Quotes / month</td><td class="n">0</td><td class="n">25</td><td class="n">200</td></tr>
+      <tr><td>Orders / month (when enabled)</td><td class="n">0</td><td class="n">10</td><td class="n">50</td></tr>
+      <tr><td>can_purchase</td><td class="n">false</td><td class="n">true</td><td class="n">true</td></tr>
+      <tr><td>Retention (days)</td><td class="n">14</td><td class="n">90</td><td class="n">365</td></tr>
+      <tr><td>Concurrent analyses</td><td class="n">1</td><td class="n">1</td><td class="n">3</td></tr>
+      <tr><td>New unique MPN lookups / day</td><td class="n">100</td><td class="n">500</td><td class="n">2,000</td></tr>
+      <tr><td>Include in daily Digi-Key sync</td><td class="n">no</td><td class="n">yes</td><td class="n">yes</td></tr>
+      <tr><td>LLM / Bedrock</td><td class="n">off</td><td class="n">off until enabled</td><td class="n">off until enabled</td></tr>
+    </tbody>
+  </table>
+  <p class="meta">Definitions: lines/month = sum of lines in each analysis job (re-analyze counts). Active BOM = un-archived, inside retention. Seats are a ceiling; today 1 Cognito user = 1 seat.</p>
+
+  <h2>3. Why keep $149 / $399</h2>
+  <p>The stickers are already in the right B2B neighborhood. SiliconExpert’s public BOM Manager starter is <strong>$250/mo for 1 user and 1 BOM up to 500 parts</strong>. Prokuro Growth is under that price with more live BOMs and quotes. Cutting to $99 is a consumer reflex. Do not raise dollars while Digi-Key ordering is off and Growth/Scale are undifferentiated in product. Raise value on Scale (seats, 2,000-line boards, orders), not the list price. No other competitor dollar figures are used here — Z2Data and Nexar do not publish list prices we will treat as facts.</p>
+
+  <h2>4. Packaging (locked)</h2>
+  <p><strong>Sell live BOMs + a hard monthly line cap.</strong> One sentence: you pay for how many BOMs you keep live; we cap lines so API spend cannot explode. Seats are a ceiling (1 / 2 / 5), not the SKU. Hard 402 + upgrade, not overages.</p>
+  <p>Rejected for v1: seat-primary packaging (cost is unique MPNs and analyses, not heads; hardware teams share logins) and usage overages (no meter yet; B2B buyers hate surprise invoices). Revisit overages only after 90 days of real histograms, and only for Enterprise.</p>
+
+  <h2>5. Abuse and AWS explosion controls</h2>
+  <p>Digi-Key enrichment is globally capped at 1,000 lookups/day and 120/min. Unlimited Free plus daily sync of every <span class="sans">prokuro-parts</span> key is how a few novel industrial BOMs starve paid customers. AWS dollars at 0–200 accounts are almost entirely lights-on (~$50–100/mo, base ~$70). Uncapped Free is a <strong>quota</strong> risk, not primarily a dollar risk.</p>
+  <div class="keep">
+    <h3>Free kill-switches (must be live before advertising Free)</h3>
+    <ul>
+      <li><span class="sans">can_purchase=false</span> — no quotes, no orders</li>
+      <li>Hard 402 at 1 BOM / 100 lines / 3 analyses / 300 lines per month</li>
+      <li>1 concurrent job; 100 new MPN lookups/day/account</li>
+      <li>Global Free Digi-Key intake: <strong>400 lookups/day</strong>; paid skips this queue</li>
+      <li>Free-origin MPNs never enter daily sync unless a paid account has used that MPN</li>
+      <li>14-day TTL on BOM files and analyses, then delete</li>
+      <li>Work email; 1 Free org per email domain; upload file cap 2 MB</li>
+      <li>INFO logs only; no provider payload dumps</li>
+      <li>Fargate desiredCount min=1 max=2</li>
+    </ul>
+  </div>
+  <table>
+    <thead>
+      <tr><th>#</th><th>Explosion</th><th>Control</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td>Debug logs / longer retention</td><td>Keep 1-day Fargate retention. Alarm ingest &gt; 5 GB/day.</td></tr>
+      <tr><td>2</td><td>Bedrock on every line (esp. Sonnet)</td><td>LLM off on Free and until explicitly enabled on paid. Per-line token cap if enabled.</td></tr>
+      <tr><td>3</td><td>Uncapped Free unique-MPN fanout</td><td>Caps + 400/day Free intake + skip daily sync + paid-priority queue.</td></tr>
+      <tr><td>4</td><td>Fargate scale-out / oversize</td><td>min=1 max=2 until 50 paid accounts. Alarm RunningTaskCount &gt; 2. Billing alarm $150.</td></tr>
+      <tr><td>5</td><td>NAT + Amplify egress + versioned S3</td><td>Stay public-subnet. Expire noncurrent BOM versions at 30 days. No Amplify WAF until needed.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>6. Cost snapshot (order of magnitude, USD)</h2>
+  <p>Lights-on AWS ~$50–100/mo (base ~$70). One Growth subscriber covers baseline. AWS per analysis is cents. Stripe fee (~$5 on $149, ~$12 on $399) is the main paid COGS until Bedrock, debug logs, or uncapped Free. Mix assumed 50% Free / 40% Growth / 10% Scale. Not a bill.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>N accounts</th>
+        <th class="n">Gross revenue</th>
+        <th class="n">Infra+API COGS</th>
+        <th class="n">Stripe fees</th>
+        <th class="n">Contribution</th>
+        <th class="n">Margin</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>10 (5F · 4G · 1S)</td><td class="n">$996</td><td class="n">~$75</td><td class="n">~$30</td><td class="n">~$890</td><td class="n">~90%</td></tr>
+      <tr><td>50 (25F · 20G · 5S)</td><td class="n">$4,975</td><td class="n">~$110</td><td class="n">~$154</td><td class="n">~$4,700</td><td class="n">~95%</td></tr>
+      <tr><td>200 (100F · 80G · 20S)</td><td class="n">$19,900</td><td class="n">~$250</td><td class="n">~$617</td><td class="n">~$19,000</td><td class="n">~96%</td></tr>
+      <tr><td>1,000 (500F · 400G · 100S)</td><td class="n">$99,500</td><td class="n">~$900</td><td class="n">~$3,055</td><td class="n">~$96,000</td><td class="n">~96%</td></tr>
+    </tbody>
+  </table>
+  <table>
+    <thead>
+      <tr>
+        <th></th>
+        <th class="n">Free $0</th>
+        <th class="n">Growth $149</th>
+        <th class="n">Scale $399</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Infra+API COGS (base)</td><td class="n">$0.10</td><td class="n">~$1</td><td class="n">~$3</td></tr>
+      <tr><td>Stripe</td><td class="n">$0</td><td class="n">~$5</td><td class="n">~$12</td></tr>
+      <tr><td>Contribution (base)</td><td class="n">−$0.10</td><td class="n">~$143</td><td class="n">~$384</td></tr>
+      <tr><td>Break-even vs $70 lights-on</td><td class="n">never</td><td class="n">1 user</td><td class="n">1 user</td></tr>
+    </tbody>
+  </table>
+  <p class="meta">Free budget: ≤ $1 variable/user/month. Proposed caps land ~$0.10–0.50 AWS if LLM is off. Digi-Key quota binds before dollars. Uncapped Scale + Sonnet is the only plausible negative-margin path in this model.</p>
+
+  <h2>7. Stripe (TEST) and entitlements</h2>
+  <p><strong>Keep (do not archive):</strong> Growth monthly <span class="sans">price_1U4Mrn6OM1R4nep11h3o5N5N</span> ($149); Scale monthly <span class="sans">price_1U4MsS6OM1R4nep1VdxKcCPb</span> ($399).</p>
+  <p><strong>Create:</strong> <span class="sans">growth_annual</span> $1,490/year (metadata plan=growth); <span class="sans">scale_annual</span> $3,990/year (metadata plan=scale).</p>
+  <p><strong>Do not create</strong> a Free product or price. Default <span class="sans">plan=free</span> when no active subscription. Checkout adds <span class="sans">interval: month | year</span>; refuse Free checkout. Wire <span class="sans">STRIPE_PRICE_GROWTH_ANNUAL</span> / <span class="sans">STRIPE_PRICE_SCALE_ANNUAL</span>; monthly env vars stay.</p>
+  <p>Enforce the JSON below on create_bom, analyze, quote, and order. Return 402 with <span class="sans">{plan, cap, used, limit}</span>. Period counters on the billing Dynamo item.</p>
+  <pre class="json">{
+  "free":   { "seats": 1, "active_boms": 1,  "max_lines_per_bom": 100,  "lines_per_month": 300,   "analyses_per_month": 3,   "quotes_per_month": 0,   "orders_per_month": 0,  "can_purchase": false, "retention_days": 14,  "concurrent_analyses": 1, "unique_mpn_lookups_per_day": 100,  "include_in_daily_sync": false, "llm": "off" },
+  "growth": { "seats": 2, "active_boms": 10, "max_lines_per_bom": 500,  "lines_per_month": 2500,  "analyses_per_month": 20,  "quotes_per_month": 25,  "orders_per_month": 10, "can_purchase": true,  "retention_days": 90,  "concurrent_analyses": 1, "unique_mpn_lookups_per_day": 500,  "include_in_daily_sync": true,  "llm": "off_until_enabled" },
+  "scale":  { "seats": 5, "active_boms": 50, "max_lines_per_bom": 2000, "lines_per_month": 15000, "analyses_per_month": 100, "quotes_per_month": 200, "orders_per_month": 50, "can_purchase": true,  "retention_days": 365, "concurrent_analyses": 3, "unique_mpn_lookups_per_day": 2000, "include_in_daily_sync": true,  "llm": "off_until_enabled" }
+}</pre>
+
+  <h2>8. Ship order and launch checklist</h2>
+  <ol class="ol-tight">
+    <li><strong>Caps + paid-priority Digi-Key + Free sync exclusion + 402s.</strong> Do not advertise Free until this is live.</li>
+    <li><strong>Annual Stripe prices + checkout interval.</strong></li>
+    <li><strong>Website pricing grid / real billing UI.</strong></li>
+  </ol>
+  <table>
+    <thead>
+      <tr><th>Item</th><th>Today</th><th>Required for Free launch</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Per-tier quotas + 402s</td><td>Missing (only can_purchase)</td><td>Entitlements map on create/analyze/quote/order</td></tr>
+      <tr><td>can_purchase=false on Free</td><td>Already</td><td>Keep; no “taste of quotes”</td></tr>
+      <tr><td>Digi-Key 1,000/day limiter</td><td>In-process, global</td><td>Per-account + paid-priority + Free 400/day</td></tr>
+      <tr><td>Free parts skip daily sync</td><td>Missing</td><td>Sync only if a paid account used the MPN</td></tr>
+      <tr><td>CloudWatch 1-day retention</td><td>Already (Fargate)</td><td>Do not raise; audit payload logging</td></tr>
+      <tr><td>Fargate min 1 max 2</td><td>desiredCount=1, no ASG</td><td>Leave it; alarm RunningTaskCount &gt; 2</td></tr>
+      <tr><td>AWS billing alarm $100 / $150 / $250</td><td>Missing (BOM-write only)</td><td>Account estimated charges + SNS</td></tr>
+      <tr><td>S3 noncurrent expiry</td><td>Versioned, no lifecycle</td><td>Expire noncurrent at 30 days</td></tr>
+      <tr><td>1 Free org / domain</td><td>Self-signup, no cap</td><td>Work email; block disposable</td></tr>
+    </tbody>
+  </table>
+
+  <h2>9. 30-day metrics and red flags</h2>
+  <p>Watch weekly. Decide on day 30. Do not change $149 / $399 during the experiment unless a red flag below fires.</p>
+  <div class="two keep">
+    <div>
+      <h3>Metrics</h3>
+      <ul>
+        <li>Signups (accounts created)</li>
+        <li>Free → paid conversion: <strong>≥8%</strong> of Free that ran ≥1 analysis</li>
+        <li>Free cap-hit rate: <strong>20–40%</strong> of actives (too low = Free too fat)</li>
+        <li>Analyses / active user (Free vs Growth)</li>
+        <li>Lines / analysis (p50 / p90)</li>
+        <li>AWS bill vs ~$70 baseline</li>
+        <li>Digi-Key / enrichment 429s and paid-queue wait</li>
+        <li>Quote attempts on Free (succeeding should be ~0)</li>
+        <li>Stripe: new Growth vs Scale; monthly vs annual</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Red flags</h3>
+      <p><strong>Tighten Free immediately</strong> (do not wait 30 days): AWS bill &gt;$150 with &lt;20 paid; Digi-Key 429s starving paid analyses; daily sync growing from Free-only MPNs; one domain burning the 400/day Free intake; Free users running 500+ line production BOMs via split files or re-signup.</p>
+      <p><strong>Raise price only after 30 days:</strong> conversion &gt;25% and paid users sitting &gt;80% of caps without churn; Scale attaching with no push. <strong>Do not raise</strong> if conversion &lt;5% — tighten Free and upgrade copy first.</p>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>Decision.</strong> This brief is locked. Implement entitlements and kill-switches, then annual Stripe, then the public grid. Pricing without caps is how TEST becomes an AWS/API incident.
+  </div>
+
+  <div class="foot">
+    Live deploy context (footnote): Gateway
+    http://prokuro-backend-2059790516.us-west-2.elb.amazonaws.com
+    · App
+    https://main.douep9i9pzude.amplifyapp.com
+    · Billing APIs live; Amplify Account UI still old mock until web billing push.
+    · Architecture: us-west-2, 1× Fargate ARM64 512 CPU / 2048 MB, public subnet, ALB, Amplify SSR.
+  </div>
+
+</body>
+</html>

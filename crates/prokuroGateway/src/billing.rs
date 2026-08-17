@@ -23,10 +23,11 @@ use serde_json::json;
 use sha2::Sha256;
 
 use crate::auth::{authenticate, AuthUser};
+use crate::entitlements::{empty_usage, limits_for};
 use crate::state::AppState;
 use prokuro_types::purchasing::{
     BillingAccountStatus, BillingPlan, BillingStatus, CheckoutRequest, CheckoutResponse,
-    PortalRequest, PortalResponse, PurchaseStatus,
+    PlanUsage, PortalRequest, PortalResponse, PurchaseStatus,
 };
 
 type HmacSha256 = Hmac<Sha256>;
@@ -98,9 +99,11 @@ impl BillingService {
             status: BillingStatus::None,
             current_period_end: None,
         });
-        Ok(status_from_record(&record))
+        let usage = self.get_usage(&user.account_id).await.unwrap_or_else(|_| empty_usage());
+        Ok(status_from_record(&record, usage))
     }
 
+    /// v1.1: Free can purchase under caps; paid needs Active/Trialing when billing required.
     pub async fn ensure_can_purchase(&self, user: &AuthUser) -> Result<(), PurchaseStatus> {
         if !self.required {
             return Ok(());
@@ -111,6 +114,204 @@ impl BillingService {
         } else {
             Err(PurchaseStatus::RequiresSubscription)
         }
+    }
+
+    pub async fn ensure_purchasing_action(
+        &self,
+        user: &AuthUser,
+        is_order: bool,
+    ) -> Result<(), CapError> {
+        if !self.required {
+            return Ok(());
+        }
+        self.ensure_can_purchase(user)
+            .await
+            .map_err(|status| CapError {
+                plan: BillingPlan::Free,
+                cap: if matches!(status, PurchaseStatus::RequiresSubscription) {
+                    "subscription"
+                } else {
+                    "purchase"
+                },
+                used: 0,
+                limit: 0,
+                purchase_status: Some(status),
+            })?;
+
+        let status = self.status_for(user).await.map_err(|_| CapError {
+            plan: BillingPlan::Free,
+            cap: "usage",
+            used: 0,
+            limit: 0,
+            purchase_status: Some(PurchaseStatus::Error),
+        })?;
+        let limits = &status.limits;
+        let usage = &status.usage;
+
+        if usage.purchasing_actions_count >= limits.purchasing_actions_per_month {
+            return Err(CapError {
+                plan: status.plan,
+                cap: "purchasing_actions_per_month",
+                used: usage.purchasing_actions_count,
+                limit: limits.purchasing_actions_per_month,
+                purchase_status: Some(PurchaseStatus::CapExceeded),
+            });
+        }
+        if is_order && usage.orders_count >= limits.orders_per_month {
+            return Err(CapError {
+                plan: status.plan,
+                cap: "orders_per_month",
+                used: usage.orders_count,
+                limit: limits.orders_per_month,
+                purchase_status: Some(PurchaseStatus::CapExceeded),
+            });
+        }
+
+        self.increment_usage(
+            &user.account_id,
+            0,
+            0,
+            1,
+            if is_order { 1 } else { 0 },
+        )
+        .await
+        .map_err(|_| CapError {
+            plan: status.plan,
+            cap: "usage_write",
+            used: 0,
+            limit: 0,
+            purchase_status: Some(PurchaseStatus::Error),
+        })?;
+        Ok(())
+    }
+
+    pub async fn ensure_bom_create(
+        &self,
+        user: &AuthUser,
+        active_bom_count: u32,
+        line_count: u32,
+    ) -> Result<(), CapError> {
+        if !self.required {
+            return Ok(());
+        }
+        let status = self.status_for(user).await.map_err(|_| CapError {
+            plan: BillingPlan::Free,
+            cap: "usage",
+            used: 0,
+            limit: 0,
+            purchase_status: None,
+        })?;
+        let limits = &status.limits;
+        let usage = &status.usage;
+
+        if active_bom_count >= limits.active_boms {
+            return Err(CapError {
+                plan: status.plan,
+                cap: "active_boms",
+                used: active_bom_count,
+                limit: limits.active_boms,
+                purchase_status: None,
+            });
+        }
+        if line_count > limits.max_lines_per_bom {
+            return Err(CapError {
+                plan: status.plan,
+                cap: "max_lines_per_bom",
+                used: line_count,
+                limit: limits.max_lines_per_bom,
+                purchase_status: None,
+            });
+        }
+        if usage.analyses_count >= limits.analyses_per_month {
+            return Err(CapError {
+                plan: status.plan,
+                cap: "analyses_per_month",
+                used: usage.analyses_count,
+                limit: limits.analyses_per_month,
+                purchase_status: None,
+            });
+        }
+        if usage.lines_count + line_count > limits.lines_per_month {
+            return Err(CapError {
+                plan: status.plan,
+                cap: "lines_per_month",
+                used: usage.lines_count,
+                limit: limits.lines_per_month,
+                purchase_status: None,
+            });
+        }
+
+        self.increment_usage(&user.account_id, 1, line_count, 0, 0)
+            .await
+            .map_err(|_| CapError {
+                plan: status.plan,
+                cap: "usage_write",
+                used: 0,
+                limit: 0,
+                purchase_status: None,
+            })?;
+        Ok(())
+    }
+
+    async fn usage_sk() -> String {
+        let month = chrono::Utc::now().format("%Y-%m").to_string();
+        format!("USAGE#{month}")
+    }
+
+    async fn get_usage(&self, account_id: &str) -> Result<PlanUsage, String> {
+        let sk = Self::usage_sk().await;
+        let result = self
+            .dynamo
+            .get_item()
+            .table_name(&self.table)
+            .key("pk", AttributeValue::S(format!("ACCOUNT#{account_id}")))
+            .key("sk", AttributeValue::S(sk))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let Some(item) = result.item else {
+            return Ok(empty_usage());
+        };
+        let n = |key: &str| {
+            item.get(key)
+                .and_then(|v| v.as_n().ok())
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(0)
+        };
+        Ok(PlanUsage {
+            analyses_count: n("analyses_count"),
+            lines_count: n("lines_count"),
+            purchasing_actions_count: n("purchasing_actions_count"),
+            orders_count: n("orders_count"),
+        })
+    }
+
+    async fn increment_usage(
+        &self,
+        account_id: &str,
+        analyses: u32,
+        lines: u32,
+        purchasing: u32,
+        orders: u32,
+    ) -> Result<(), String> {
+        let sk = Self::usage_sk().await;
+        self.dynamo
+            .update_item()
+            .table_name(&self.table)
+            .key("pk", AttributeValue::S(format!("ACCOUNT#{account_id}")))
+            .key("sk", AttributeValue::S(sk))
+            .update_expression(
+                "ADD analyses_count :a, lines_count :l, purchasing_actions_count :p, orders_count :o SET account_id = if_not_exists(account_id, :aid)",
+            )
+            .expression_attribute_values(":a", AttributeValue::N(analyses.to_string()))
+            .expression_attribute_values(":l", AttributeValue::N(lines.to_string()))
+            .expression_attribute_values(":p", AttributeValue::N(purchasing.to_string()))
+            .expression_attribute_values(":o", AttributeValue::N(orders.to_string()))
+            .expression_attribute_values(":aid", AttributeValue::S(account_id.to_string()))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     pub async fn create_checkout(
@@ -429,17 +630,65 @@ impl BillingService {
     }
 }
 
-fn status_from_record(record: &BillingRecord) -> BillingAccountStatus {
-    let can_purchase = matches!(
-        record.status,
-        BillingStatus::Active | BillingStatus::Trialing
-    ) && !matches!(record.plan, BillingPlan::Free);
+fn status_from_record(record: &BillingRecord, usage: PlanUsage) -> BillingAccountStatus {
+    // v1.1: Free always can_purchase (enforced via purchasing_actions caps).
+    // Paid plans need Active/Trialing.
+    let can_purchase = match record.plan {
+        BillingPlan::Free => true,
+        BillingPlan::Growth | BillingPlan::Scale => {
+            matches!(
+                record.status,
+                BillingStatus::Active | BillingStatus::Trialing
+            )
+        }
+    };
+    let limits = limits_for(record.plan);
     BillingAccountStatus {
         plan: record.plan,
         status: record.status,
         can_purchase,
+        limits,
+        usage,
         stripe_customer_id: record.stripe_customer_id.clone(),
         current_period_end: record.current_period_end.clone(),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CapError {
+    pub plan: BillingPlan,
+    pub cap: &'static str,
+    pub used: u32,
+    pub limit: u32,
+    pub purchase_status: Option<PurchaseStatus>,
+}
+
+impl CapError {
+    pub fn into_response(self) -> axum::response::Response {
+        (
+            StatusCode::PAYMENT_REQUIRED,
+            Json(json!({
+                "error": "plan_cap_exceeded",
+                "plan": plan_str(self.plan),
+                "cap": self.cap,
+                "used": self.used,
+                "limit": self.limit,
+            })),
+        )
+            .into_response()
+    }
+}
+
+fn free_status_payload(can_purchase: bool) -> BillingAccountStatus {
+    let plan = BillingPlan::Free;
+    BillingAccountStatus {
+        plan,
+        status: BillingStatus::None,
+        can_purchase,
+        limits: limits_for(plan),
+        usage: empty_usage(),
+        stripe_customer_id: None,
+        current_period_end: None,
     }
 }
 
@@ -547,16 +796,8 @@ pub async fn billing_status(
     };
 
     let Some(billing) = &state.billing else {
-        return Json(BillingAccountStatus {
-            plan: BillingPlan::Free,
-            status: BillingStatus::None,
-            can_purchase: !std::env::var("BILLING_REQUIRED")
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false),
-            stripe_customer_id: None,
-            current_period_end: None,
-        })
-        .into_response();
+        // Without Stripe, still expose Free entitlements; local unpaid env can purchase.
+        return Json(free_status_payload(true)).into_response();
     };
 
     match billing.status_for(&user).await {
@@ -689,7 +930,7 @@ mod tests {
     }
 
     #[test]
-    fn status_from_record_requires_paid_active_plan() {
+    fn status_from_record_allows_free_purchase() {
         let record = BillingRecord {
             account_id: "acc".into(),
             email: None,
@@ -699,13 +940,18 @@ mod tests {
             status: BillingStatus::Active,
             current_period_end: None,
         };
-        assert!(status_from_record(&record).can_purchase);
+        assert!(status_from_record(&record, empty_usage()).can_purchase);
 
         let free = BillingRecord {
             plan: BillingPlan::Free,
-            status: BillingStatus::Active,
+            status: BillingStatus::None,
+            stripe_customer_id: None,
+            stripe_subscription_id: None,
             ..record.clone()
         };
-        assert!(!status_from_record(&free).can_purchase);
+        let free_status = status_from_record(&free, empty_usage());
+        assert!(free_status.can_purchase);
+        assert_eq!(free_status.limits.active_boms, 1);
+        assert_eq!(free_status.limits.purchasing_actions_per_month, 5);
     }
 }

@@ -24,6 +24,8 @@ pub enum PurchaseStatus {
     RequiresDistributorCredit,
     /// Prokuro SaaS subscription required before purchasing.
     RequiresSubscription,
+    /// Plan entitlement cap hit (analyses, lines, purchasing actions, etc.).
+    CapExceeded,
     /// Provider returned an error.
     Error,
 }
@@ -113,11 +115,45 @@ pub enum BillingStatus {
     Canceled,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefreshCadence {
+    Weekly,
+    Daily,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanLimits {
+    pub seats: u32,
+    pub active_boms: u32,
+    pub max_lines_per_bom: u32,
+    pub lines_per_month: u32,
+    pub analyses_per_month: u32,
+    pub purchasing_actions_per_month: u32,
+    pub orders_per_month: u32,
+    pub concurrent_analyses: u32,
+    pub unique_mpn_lookups_per_day: u32,
+    pub refresh: RefreshCadence,
+    /// Client hint only (`haiku_capped` | `on`); Bedrock wiring is separate.
+    pub bedrock: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PlanUsage {
+    pub analyses_count: u32,
+    pub lines_count: u32,
+    pub purchasing_actions_count: u32,
+    pub orders_count: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BillingAccountStatus {
     pub plan: BillingPlan,
     pub status: BillingStatus,
+    /// v1.1: true for Free (small purchasing caps) and paid Active/Trialing.
     pub can_purchase: bool,
+    pub limits: PlanLimits,
+    pub usage: PlanUsage,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stripe_customer_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
