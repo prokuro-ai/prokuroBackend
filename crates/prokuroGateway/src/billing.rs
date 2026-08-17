@@ -22,7 +22,7 @@ use serde::Deserialize;
 use serde_json::json;
 use sha2::Sha256;
 
-use crate::auth::{authenticate, AuthUser};
+use crate::auth::{require_manage_team, AuthUser};
 use crate::entitlements::{empty_usage, limits_for};
 use crate::state::AppState;
 use prokuro_types::purchasing::{
@@ -790,9 +790,9 @@ pub async fn billing_status(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    let user = match authenticate(state.auth.as_ref(), &headers).await {
+    let user = match state.authenticate(&headers).await {
         Ok(user) => user,
-        Err(response) => return response.into_response(),
+        Err(response) => return response,
     };
 
     let Some(billing) = &state.billing else {
@@ -811,10 +811,13 @@ pub async fn billing_checkout(
     headers: HeaderMap,
     payload: Result<Json<CheckoutRequest>, JsonRejection>,
 ) -> impl IntoResponse {
-    let user = match authenticate(state.auth.as_ref(), &headers).await {
+    let user = match state.authenticate(&headers).await {
         Ok(user) => user,
-        Err(response) => return response.into_response(),
+        Err(response) => return response,
     };
+    if let Err(response) = require_manage_team(&user) {
+        return response;
+    }
     let request = match payload {
         Ok(Json(request)) => request,
         Err(error) => {
@@ -843,10 +846,13 @@ pub async fn billing_portal(
     headers: HeaderMap,
     payload: Result<Json<PortalRequest>, JsonRejection>,
 ) -> impl IntoResponse {
-    let user = match authenticate(state.auth.as_ref(), &headers).await {
+    let user = match state.authenticate(&headers).await {
         Ok(user) => user,
-        Err(response) => return response.into_response(),
+        Err(response) => return response,
     };
+    if let Err(response) = require_manage_team(&user) {
+        return response;
+    }
     let request = match payload {
         Ok(Json(request)) => request,
         Err(error) => {

@@ -8,7 +8,7 @@ use serde_json::json;
 use prokuro_types::pagination::{page_by_id, PageError, PageParams};
 
 use crate::analyze::{apply_enrichment_results, finalize_analyze, AnalyzeResult, AnalyzedLine};
-use crate::auth::authenticate;
+use crate::auth::require_write;
 use crate::clients::enrichment::{EnrichInput, EnrichmentClient};
 use crate::state::AppState;
 
@@ -27,9 +27,9 @@ pub async fn list_boms(
     headers: HeaderMap,
     Query(query): Query<ListBomsQuery>,
 ) -> impl IntoResponse {
-    let user = match authenticate(state.auth.as_ref(), &headers).await {
+    let user = match state.authenticate(&headers).await {
         Ok(user) => user,
-        Err(response) => return response.into_response(),
+        Err(response) => return response,
     };
 
     let params = PageParams::from_query(query.limit, query.next_token);
@@ -57,9 +57,9 @@ pub async fn get_bom(
     headers: HeaderMap,
     Path(bom_id): Path<String>,
 ) -> impl IntoResponse {
-    let user = match authenticate(state.auth.as_ref(), &headers).await {
+    let user = match state.authenticate(&headers).await {
         Ok(user) => user,
-        Err(response) => return response.into_response(),
+        Err(response) => return response,
     };
 
     match state.bom_store.get_bom(&user.account_id, &bom_id).await {
@@ -128,10 +128,13 @@ pub async fn create_bom(
     headers: HeaderMap,
     multipart: Multipart,
 ) -> impl IntoResponse {
-    let user = match authenticate(state.auth.as_ref(), &headers).await {
+    let user = match state.authenticate(&headers).await {
         Ok(user) => user,
-        Err(response) => return response.into_response(),
+        Err(response) => return response,
     };
+    if let Err(response) = require_write(&user) {
+        return response;
+    }
 
     let upload = match read_bom_upload(multipart).await {
         Ok(upload) => upload,
@@ -263,10 +266,13 @@ pub async fn delete_bom(
     headers: HeaderMap,
     Path(bom_id): Path<String>,
 ) -> impl IntoResponse {
-    let user = match authenticate(state.auth.as_ref(), &headers).await {
+    let user = match state.authenticate(&headers).await {
         Ok(user) => user,
-        Err(response) => return response.into_response(),
+        Err(response) => return response,
     };
+    if let Err(response) = require_write(&user) {
+        return response;
+    }
 
     match state.bom_store.delete_bom(&user.account_id, &bom_id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
@@ -331,10 +337,13 @@ pub async fn put_bom(
     Path(bom_id): Path<String>,
     Json(body): Json<PutBomBody>,
 ) -> impl IntoResponse {
-    let user = match authenticate(state.auth.as_ref(), &headers).await {
+    let user = match state.authenticate(&headers).await {
         Ok(user) => user,
-        Err(response) => return response.into_response(),
+        Err(response) => return response,
     };
+    if let Err(response) = require_write(&user) {
+        return response;
+    }
 
     match state
         .bom_store
@@ -354,10 +363,13 @@ pub async fn patch_line(
     Path((bom_id, line_index)): Path<(String, usize)>,
     Json(body): Json<PatchLineBody>,
 ) -> impl IntoResponse {
-    let user = match authenticate(state.auth.as_ref(), &headers).await {
+    let user = match state.authenticate(&headers).await {
         Ok(user) => user,
-        Err(response) => return response.into_response(),
+        Err(response) => return response,
     };
+    if let Err(response) = require_write(&user) {
+        return response;
+    }
 
     let patch = LinePatch {
         mpn: body.mpn,
@@ -390,10 +402,13 @@ pub async fn delete_line(
     Path((bom_id, line_index)): Path<(String, usize)>,
     Query(query): Query<VersionQuery>,
 ) -> impl IntoResponse {
-    let user = match authenticate(state.auth.as_ref(), &headers).await {
+    let user = match state.authenticate(&headers).await {
         Ok(user) => user,
-        Err(response) => return response.into_response(),
+        Err(response) => return response,
     };
+    if let Err(response) = require_write(&user) {
+        return response;
+    }
 
     match state
         .bom_store
@@ -417,10 +432,13 @@ pub async fn add_line(
     Path(bom_id): Path<String>,
     Json(body): Json<AddLineBody>,
 ) -> impl IntoResponse {
-    let user = match authenticate(state.auth.as_ref(), &headers).await {
+    let user = match state.authenticate(&headers).await {
         Ok(user) => user,
-        Err(response) => return response.into_response(),
+        Err(response) => return response,
     };
+    if let Err(response) = require_write(&user) {
+        return response;
+    }
 
     let input = NewLineInput {
         mpn: body.mpn,
@@ -714,6 +732,7 @@ mod tests {
             auth: None,
             bom_store: Arc::new(store),
             billing: None,
+            team: Arc::new(crate::team::TeamStore::memory()),
         };
         let app = crate::app(state);
 
@@ -743,6 +762,7 @@ mod tests {
             auth: None,
             bom_store: Arc::new(BomStore::local(temp.path().to_path_buf())),
             billing: None,
+            team: Arc::new(crate::team::TeamStore::memory()),
         };
         let app = crate::app(state);
 

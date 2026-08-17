@@ -68,6 +68,43 @@ set -a && source .env && set +a && PORT=3002 cargo run -p prokuro-enrichment --b
 PORT=3000 PARSER_URL=http://localhost:3001 ENRICHMENT_URL=http://localhost:3002 cargo run -p prokuro-gateway --bin prokuro-gateway
 ```
 
+## Team invites (local smoke)
+
+Membership is resolved in the gateway: Cognito `sub` (or `Bearer test:<user_id>`) maps to a team `account_id`. Pending invites count toward plan seats (Free=1, Growth=2, Scale=5) until accepted, revoked, or expired (7 days).
+
+```bash
+# Gateway (memory members store; no Dynamo required)
+PROKURO_LOCAL_AUTH_BYPASS=1 \
+PROKURO_DEFAULT_PLAN=growth \
+APP_BASE_URL=http://localhost:3010 \
+PORT=3000 cargo run -p prokuro-gateway --bin prokuro-gateway
+
+# Owner (Growth, 2 seats) invites a teammate
+curl -sS -X POST http://localhost:3000/v1/team/invites \
+  -H 'Authorization: Bearer test:owner-1:owner@example.com' \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"reader@example.com","role":"read_only"}'
+# Response includes accept_url (SES is skipped locally). Share that link, or:
+
+curl -sS -X POST http://localhost:3000/v1/team/invites/accept \
+  -H 'Authorization: Bearer test:reader-1:reader@example.com' \
+  -H 'Content-Type: application/json' \
+  -d '{"token":"<id from invite>"}'
+
+# Invitee now lists the owner's BOMs
+curl -sS http://localhost:3000/v1/boms \
+  -H 'Authorization: Bearer test:reader-1:reader@example.com'
+
+# Free plan (default) rejects invites with 402
+PROKURO_LOCAL_AUTH_BYPASS=1 PORT=3000 cargo run -p prokuro-gateway --bin prokuro-gateway
+curl -sS -X POST http://localhost:3000/v1/team/invites \
+  -H 'Authorization: Bearer test:owner-1:owner@example.com' \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"reader@example.com","role":"read_only"}'
+```
+
+`MEMBERS_TABLE=prokuro-members` persists membership in Dynamo (CDK table). Without it, the in-memory store is process-local.
+
 ## Frontend
 
 The production frontend lives in the sibling `prokuroWeb` repository.

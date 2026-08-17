@@ -6,13 +6,13 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Multipart, State};
 use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::response::IntoResponse;
-use axum::routing::{get, patch, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use serde_json::json;
 use tower_http::cors::{Any, CorsLayer};
 
 use analyze::{apply_tariff_results, finalize_analyze, merge, AnalyzeResult};
-use auth::authenticate;
+use auth::require_write;
 use billing::{
     billing_checkout, billing_portal, billing_status, billing_webhook,
 };
@@ -25,6 +25,9 @@ use clients::purchasing::{PlaceOrderRequest, PurchasingClient, QuoteRequest};
 use clients::tariff::{TariffClient, TariffInput};
 use prokuro_types::purchasing::{PlaceOrderResponse, PurchaseStatus, QuoteResponse};
 use state::AppState;
+use team::{
+    accept_invite, create_invite, list_members, patch_member, remove_member, revoke_invite,
+};
 
 pub mod analyze;
 pub mod auth;
@@ -33,6 +36,7 @@ pub mod boms;
 pub mod clients;
 pub mod entitlements;
 pub mod state;
+pub mod team;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GatewayError {
@@ -77,6 +81,11 @@ pub fn app(state: AppState) -> Router {
         .route("/v1/billing/checkout", post(billing_checkout))
         .route("/v1/billing/portal", post(billing_portal))
         .route("/v1/billing/webhook", post(billing_webhook))
+        .route("/v1/team/members", get(list_members))
+        .route("/v1/team/members/{user_id}", patch(patch_member).delete(remove_member))
+        .route("/v1/team/invites", post(create_invite))
+        .route("/v1/team/invites/accept", post(accept_invite))
+        .route("/v1/team/invites/{id}", delete(revoke_invite))
         .route("/v1/boms", get(list_boms).post(create_bom))
         .route(
             "/v1/boms/{id}",
@@ -324,10 +333,13 @@ async fn purchase_quote_handler(
     headers: HeaderMap,
     payload: Result<Json<QuoteRequest>, JsonRejection>,
 ) -> impl IntoResponse {
-    let user = match authenticate(state.auth.as_ref(), &headers).await {
+    let user = match state.authenticate(&headers).await {
         Ok(user) => user,
-        Err(response) => return response.into_response(),
+        Err(response) => return response,
     };
+    if let Err(response) = require_write(&user) {
+        return response;
+    }
 
     let request = match payload {
         Ok(Json(request)) => request,
@@ -388,10 +400,13 @@ async fn purchase_orders_handler(
     headers: HeaderMap,
     payload: Result<Json<PlaceOrderRequest>, JsonRejection>,
 ) -> impl IntoResponse {
-    let user = match authenticate(state.auth.as_ref(), &headers).await {
+    let user = match state.authenticate(&headers).await {
         Ok(user) => user,
-        Err(response) => return response.into_response(),
+        Err(response) => return response,
     };
+    if let Err(response) = require_write(&user) {
+        return response;
+    }
 
     let request = match payload {
         Ok(Json(request)) => request,

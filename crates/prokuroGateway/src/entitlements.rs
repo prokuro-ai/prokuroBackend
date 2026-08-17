@@ -3,6 +3,14 @@
 
 use prokuro_types::purchasing::{BillingPlan, PlanLimits, PlanUsage, RefreshCadence};
 
+pub fn plan_slug(plan: BillingPlan) -> &'static str {
+    match plan {
+        BillingPlan::Free => "free",
+        BillingPlan::Growth => "growth",
+        BillingPlan::Scale => "scale",
+    }
+}
+
 pub fn limits_for(plan: BillingPlan) -> PlanLimits {
     match plan {
         BillingPlan::Free => PlanLimits {

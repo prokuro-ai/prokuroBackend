@@ -2,14 +2,58 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::Json;
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::sync::RwLock;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamRole {
+    Owner,
+    Admin,
+    ReadOnly,
+}
+
+impl TeamRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::Admin => "admin",
+            Self::ReadOnly => "read_only",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "owner" => Some(Self::Owner),
+            "admin" => Some(Self::Admin),
+            "read_only" => Some(Self::ReadOnly),
+            _ => None,
+        }
+    }
+
+    pub fn can_write(self) -> bool {
+        !matches!(self, Self::ReadOnly)
+    }
+
+    pub fn can_manage_team(self) -> bool {
+        matches!(self, Self::Owner | Self::Admin)
+    }
+
+    pub fn can_invite_as(self) -> bool {
+        matches!(self, Self::Admin | Self::ReadOnly)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct AuthUser {
+    pub user_id: String,
     pub account_id: String,
     pub email: Option<String>,
+    pub role: TeamRole,
 }
 
 #[derive(Debug, Clone)]
@@ -88,10 +132,7 @@ impl AuthService {
     pub async fn authenticate(&self, headers: &HeaderMap) -> Result<AuthUser, AuthError> {
         let token = bearer_token(headers)?;
         let claims = self.verify_token(token).await?;
-        Ok(AuthUser {
-            account_id: claims.sub,
-            email: claims.email,
-        })
+        Ok(identity_user(claims.sub, claims.email))
     }
 
     async fn verify_token(&self, token: &str) -> Result<CognitoClaims, AuthError> {
@@ -138,26 +179,22 @@ impl AuthService {
     }
 }
 
+/// Identity only (Cognito sub / test token). Account membership is applied in `AppState::authenticate`.
 pub async fn authenticate(
     auth: Option<&Arc<AuthService>>,
     headers: &HeaderMap,
 ) -> Result<AuthUser, (StatusCode, String)> {
     #[cfg(test)]
-    if let Some(account_id) = test_account_id(headers) {
-        return Ok(AuthUser {
-            account_id,
-            email: None,
-        });
+    if let Some(user) = test_identity(headers) {
+        return Ok(user);
     }
 
     // Local-only smoke: set PROKURO_LOCAL_AUTH_BYPASS=1 and use
-    // `Authorization: Bearer test:<account_id>`. Never enable in deployed envs.
+    // `Authorization: Bearer test:<user_id>` or `test:<user_id>:<email>`.
+    // Never enable in deployed envs.
     if std::env::var("PROKURO_LOCAL_AUTH_BYPASS").ok().as_deref() == Some("1") {
-        if let Some(account_id) = local_bypass_account_id(headers) {
-            return Ok(AuthUser {
-                account_id,
-                email: None,
-            });
+        if let Some(user) = local_bypass_identity(headers) {
+            return Ok(user);
         }
     }
 
@@ -173,18 +210,65 @@ pub async fn authenticate(
         .map_err(|error| (StatusCode::UNAUTHORIZED, error.to_string()))
 }
 
-/// Unit-test auth bypass: `Authorization: Bearer test:<account_id>`.
-/// Only compiled into the library test build — not present in release binaries.
-#[cfg(test)]
-fn test_account_id(headers: &HeaderMap) -> Option<String> {
-    local_bypass_account_id(headers)
+#[allow(clippy::result_large_err)]
+pub fn require_write(user: &AuthUser) -> Result<(), Response> {
+    if user.role.can_write() {
+        Ok(())
+    } else {
+        Err(forbidden("read_only role cannot perform this action"))
+    }
 }
 
-fn local_bypass_account_id(headers: &HeaderMap) -> Option<String> {
-    bearer_token(headers)
+#[allow(clippy::result_large_err)]
+pub fn require_manage_team(user: &AuthUser) -> Result<(), Response> {
+    if user.role.can_manage_team() {
+        Ok(())
+    } else {
+        Err(forbidden(
+            "only owner or admin can manage team members",
+        ))
+    }
+}
+
+fn forbidden(message: &str) -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({
+            "error": "forbidden",
+            "message": message,
+        })),
+    )
+        .into_response()
+}
+
+fn identity_user(user_id: String, email: Option<String>) -> AuthUser {
+    AuthUser {
+        account_id: user_id.clone(),
+        user_id,
+        email,
+        role: TeamRole::Owner,
+    }
+}
+
+/// Unit-test auth bypass: `Authorization: Bearer test:<user_id>` or `test:<user_id>:<email>`.
+/// Only compiled into the library test build — not present in release binaries.
+#[cfg(test)]
+fn test_identity(headers: &HeaderMap) -> Option<AuthUser> {
+    local_bypass_identity(headers)
+}
+
+fn local_bypass_identity(headers: &HeaderMap) -> Option<AuthUser> {
+    let token = bearer_token(headers)
         .ok()
-        .and_then(|token| token.strip_prefix("test:"))
-        .map(str::to_string)
+        .and_then(|token| token.strip_prefix("test:"))?;
+    let (user_id, email) = match token.split_once(':') {
+        Some((user_id, email)) if !user_id.is_empty() && !email.is_empty() => {
+            (user_id.to_string(), Some(email.to_string()))
+        }
+        _ if !token.is_empty() => (token.to_string(), None),
+        _ => return None,
+    };
+    Some(identity_user(user_id, email))
 }
 
 fn bearer_token(headers: &HeaderMap) -> Result<&str, AuthError> {
