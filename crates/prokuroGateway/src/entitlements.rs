@@ -61,6 +61,14 @@ pub fn empty_usage() -> PlanUsage {
         lines_count: 0,
         purchasing_actions_count: 0,
         orders_count: 0,
+        active_boms_count: 0,
+    }
+}
+
+pub fn usage_with_boms(active_boms_count: u32, base: PlanUsage) -> PlanUsage {
+    PlanUsage {
+        active_boms_count,
+        ..base
     }
 }
 

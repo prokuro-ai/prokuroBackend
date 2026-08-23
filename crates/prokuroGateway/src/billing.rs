@@ -15,32 +15,52 @@ use axum::body::Bytes;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use serde_json::json;
 use sha2::Sha256;
+use tokio::sync::RwLock;
 
 use crate::auth::{require_manage_team, AuthUser};
-use crate::entitlements::{empty_usage, limits_for};
+use crate::entitlements::{empty_usage, limits_for, usage_with_boms};
 use crate::state::AppState;
 use prokuro_types::purchasing::{
     BillingAccountStatus, BillingPlan, BillingStatus, CheckoutRequest, CheckoutResponse,
-    PlanUsage, PortalRequest, PortalResponse, PurchaseStatus,
+    PlanSource, PlanUsage, PortalRequest, PortalResponse, PurchaseStatus,
 };
 
 type HmacSha256 = Hmac<Sha256>;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
+struct PlanOverride {
+    plan: BillingPlan,
+    expires_at: Option<String>,
+    note: Option<String>,
+}
+
+struct BillingMemory {
+    records: HashMap<String, BillingRecord>,
+    overrides: HashMap<String, PlanOverride>,
+    usage: HashMap<String, PlanUsage>,
+}
+
+enum BillingStore {
+    Dynamo {
+        table: String,
+        client: aws_sdk_dynamodb::Client,
+    },
+    Memory(RwLock<BillingMemory>),
+}
+
 pub struct BillingService {
     http: reqwest::Client,
     secret_key: String,
     webhook_secret: String,
     price_growth: String,
     price_scale: String,
-    table: String,
-    dynamo: aws_sdk_dynamodb::Client,
+    store: BillingStore,
     required: bool,
 }
 
@@ -57,20 +77,34 @@ struct BillingRecord {
 
 impl BillingService {
     pub async fn from_env() -> Option<Arc<Self>> {
-        let secret_key = std::env::var("STRIPE_SECRET_KEY").ok()?;
-        if secret_key.is_empty() {
+        let table = std::env::var("BILLING_TABLE")
+            .ok()
+            .filter(|value| !value.is_empty());
+        let secret_key = std::env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+        if table.is_none() && secret_key.is_empty() {
             return None;
         }
+
         let webhook_secret = std::env::var("STRIPE_WEBHOOK_SECRET").unwrap_or_default();
         let price_growth = std::env::var("STRIPE_PRICE_GROWTH").unwrap_or_default();
         let price_scale = std::env::var("STRIPE_PRICE_SCALE").unwrap_or_default();
-        let table = std::env::var("BILLING_TABLE").unwrap_or_else(|_| "prokuro-billing".into());
         let required = std::env::var("BILLING_REQUIRED")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
 
-        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-        let dynamo = aws_sdk_dynamodb::Client::new(&config);
+        let store = if let Some(table) = table {
+            let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+            BillingStore::Dynamo {
+                table,
+                client: aws_sdk_dynamodb::Client::new(&config),
+            }
+        } else {
+            BillingStore::Memory(RwLock::new(BillingMemory {
+                records: HashMap::new(),
+                overrides: HashMap::new(),
+                usage: HashMap::new(),
+            }))
+        };
 
         Some(Arc::new(Self {
             http: reqwest::Client::new(),
@@ -78,17 +112,93 @@ impl BillingService {
             webhook_secret,
             price_growth,
             price_scale,
-            table,
-            dynamo,
+            store,
             required,
         }))
     }
 
-    pub fn required(&self) -> bool {
-        self.required
+    #[cfg(test)]
+    pub fn memory() -> Arc<Self> {
+        Arc::new(Self {
+            http: reqwest::Client::new(),
+            secret_key: String::new(),
+            webhook_secret: String::new(),
+            price_growth: String::new(),
+            price_scale: String::new(),
+            store: BillingStore::Memory(RwLock::new(BillingMemory {
+                records: HashMap::new(),
+                overrides: HashMap::new(),
+                usage: HashMap::new(),
+            })),
+            required: false,
+        })
     }
 
-    pub async fn status_for(&self, user: &AuthUser) -> Result<BillingAccountStatus, String> {
+    pub fn stripe_configured(&self) -> bool {
+        !self.secret_key.is_empty()
+    }
+
+    pub async fn set_admin_plan(
+        &self,
+        account_id: &str,
+        plan: BillingPlan,
+        expires_at: Option<String>,
+        note: Option<String>,
+    ) -> Result<(), String> {
+        if plan == BillingPlan::Free {
+            return self.clear_admin_plan(account_id).await;
+        }
+        let item = plan_override_item(account_id, plan, expires_at.as_deref(), note.as_deref());
+        match &self.store {
+            BillingStore::Memory(state) => {
+                state.write().await.overrides.insert(
+                    account_id.to_string(),
+                    PlanOverride {
+                        plan,
+                        expires_at,
+                        note,
+                    },
+                );
+                Ok(())
+            }
+            BillingStore::Dynamo { table, client } => {
+                client
+                    .put_item()
+                    .table_name(table)
+                    .set_item(Some(item))
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn clear_admin_plan(&self, account_id: &str) -> Result<(), String> {
+        match &self.store {
+            BillingStore::Memory(state) => {
+                state.write().await.overrides.remove(account_id);
+                Ok(())
+            }
+            BillingStore::Dynamo { table, client } => {
+                client
+                    .delete_item()
+                    .table_name(table)
+                    .key("pk", AttributeValue::S(format!("ACCOUNT#{account_id}")))
+                    .key("sk", AttributeValue::S("PLAN_OVERRIDE".into()))
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn status_for(
+        &self,
+        user: &AuthUser,
+        active_boms_count: u32,
+    ) -> Result<BillingAccountStatus, String> {
         let record = self.get_record(&user.account_id).await?;
         let record = record.unwrap_or(BillingRecord {
             account_id: user.account_id.clone(),
@@ -99,8 +209,17 @@ impl BillingService {
             status: BillingStatus::None,
             current_period_end: None,
         });
-        let usage = self.get_usage(&user.account_id).await.unwrap_or_else(|_| empty_usage());
-        Ok(status_from_record(&record, usage))
+        let override_plan = self.get_plan_override(&user.account_id).await?;
+        let usage = self
+            .get_usage(&user.account_id)
+            .await
+            .unwrap_or_else(|_| empty_usage());
+        let usage = usage_with_boms(active_boms_count, usage);
+        Ok(status_from_record(&record, override_plan, usage))
+    }
+
+    pub fn required(&self) -> bool {
+        self.required
     }
 
     /// v1.1: Free can purchase under caps; paid needs Active/Trialing when billing required.
@@ -108,7 +227,10 @@ impl BillingService {
         if !self.required {
             return Ok(());
         }
-        let status = self.status_for(user).await.map_err(|_| PurchaseStatus::Error)?;
+        let status = self
+            .status_for(user, 0)
+            .await
+            .map_err(|_| PurchaseStatus::Error)?;
         if status.can_purchase {
             Ok(())
         } else {
@@ -138,7 +260,7 @@ impl BillingService {
                 purchase_status: Some(status),
             })?;
 
-        let status = self.status_for(user).await.map_err(|_| CapError {
+        let status = self.status_for(user, 0).await.map_err(|_| CapError {
             plan: BillingPlan::Free,
             cap: "usage",
             used: 0,
@@ -194,7 +316,7 @@ impl BillingService {
         if !self.required {
             return Ok(());
         }
-        let status = self.status_for(user).await.map_err(|_| CapError {
+        let status = self.status_for(user, active_bom_count).await.map_err(|_| CapError {
             plan: BillingPlan::Free,
             cap: "usage",
             used: 0,
@@ -260,30 +382,29 @@ impl BillingService {
 
     async fn get_usage(&self, account_id: &str) -> Result<PlanUsage, String> {
         let sk = Self::usage_sk().await;
-        let result = self
-            .dynamo
-            .get_item()
-            .table_name(&self.table)
-            .key("pk", AttributeValue::S(format!("ACCOUNT#{account_id}")))
-            .key("sk", AttributeValue::S(sk))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        let Some(item) = result.item else {
-            return Ok(empty_usage());
-        };
-        let n = |key: &str| {
-            item.get(key)
-                .and_then(|v| v.as_n().ok())
-                .and_then(|s| s.parse::<u32>().ok())
-                .unwrap_or(0)
-        };
-        Ok(PlanUsage {
-            analyses_count: n("analyses_count"),
-            lines_count: n("lines_count"),
-            purchasing_actions_count: n("purchasing_actions_count"),
-            orders_count: n("orders_count"),
-        })
+        match &self.store {
+            BillingStore::Memory(state) => Ok(state
+                .read()
+                .await
+                .usage
+                .get(account_id)
+                .cloned()
+                .unwrap_or_else(empty_usage)),
+            BillingStore::Dynamo { table, client } => {
+                let result = client
+                    .get_item()
+                    .table_name(table)
+                    .key("pk", AttributeValue::S(format!("ACCOUNT#{account_id}")))
+                    .key("sk", AttributeValue::S(sk))
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let Some(item) = result.item else {
+                    return Ok(empty_usage());
+                };
+                Ok(usage_from_item(&item))
+            }
+        }
     }
 
     async fn increment_usage(
@@ -295,23 +416,59 @@ impl BillingService {
         orders: u32,
     ) -> Result<(), String> {
         let sk = Self::usage_sk().await;
-        self.dynamo
-            .update_item()
-            .table_name(&self.table)
-            .key("pk", AttributeValue::S(format!("ACCOUNT#{account_id}")))
-            .key("sk", AttributeValue::S(sk))
-            .update_expression(
-                "ADD analyses_count :a, lines_count :l, purchasing_actions_count :p, orders_count :o SET account_id = if_not_exists(account_id, :aid)",
-            )
-            .expression_attribute_values(":a", AttributeValue::N(analyses.to_string()))
-            .expression_attribute_values(":l", AttributeValue::N(lines.to_string()))
-            .expression_attribute_values(":p", AttributeValue::N(purchasing.to_string()))
-            .expression_attribute_values(":o", AttributeValue::N(orders.to_string()))
-            .expression_attribute_values(":aid", AttributeValue::S(account_id.to_string()))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        match &self.store {
+            BillingStore::Memory(state) => {
+                let mut guard = state.write().await;
+                let entry = guard.usage.entry(account_id.to_string()).or_default();
+                entry.analyses_count += analyses;
+                entry.lines_count += lines;
+                entry.purchasing_actions_count += purchasing;
+                entry.orders_count += orders;
+                Ok(())
+            }
+            BillingStore::Dynamo { table, client } => {
+                client
+                    .update_item()
+                    .table_name(table)
+                    .key("pk", AttributeValue::S(format!("ACCOUNT#{account_id}")))
+                    .key("sk", AttributeValue::S(sk))
+                    .update_expression(
+                        "ADD analyses_count :a, lines_count :l, purchasing_actions_count :p, orders_count :o SET account_id = if_not_exists(account_id, :aid)",
+                    )
+                    .expression_attribute_values(":a", AttributeValue::N(analyses.to_string()))
+                    .expression_attribute_values(":l", AttributeValue::N(lines.to_string()))
+                    .expression_attribute_values(":p", AttributeValue::N(purchasing.to_string()))
+                    .expression_attribute_values(":o", AttributeValue::N(orders.to_string()))
+                    .expression_attribute_values(":aid", AttributeValue::S(account_id.to_string()))
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+        }
+    }
+
+    async fn get_plan_override(
+        &self,
+        account_id: &str,
+    ) -> Result<Option<PlanOverride>, String> {
+        match &self.store {
+            BillingStore::Memory(state) => {
+                let guard = state.read().await;
+                Ok(guard.overrides.get(account_id).cloned())
+            }
+            BillingStore::Dynamo { table, client } => {
+                let result = client
+                    .get_item()
+                    .table_name(table)
+                    .key("pk", AttributeValue::S(format!("ACCOUNT#{account_id}")))
+                    .key("sk", AttributeValue::S("PLAN_OVERRIDE".into()))
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(result.item.and_then(plan_override_from_item))
+            }
+        }
     }
 
     pub async fn create_checkout(
@@ -319,6 +476,9 @@ impl BillingService {
         user: &AuthUser,
         req: &CheckoutRequest,
     ) -> Result<CheckoutResponse, String> {
+        if !self.stripe_configured() {
+            return Err("Stripe billing not configured".into());
+        }
         let price_id = match req.plan {
             BillingPlan::Growth => self.price_growth.as_str(),
             BillingPlan::Scale => self.price_scale.as_str(),
@@ -385,6 +545,9 @@ impl BillingService {
         user: &AuthUser,
         req: &PortalRequest,
     ) -> Result<PortalResponse, String> {
+        if !self.stripe_configured() {
+            return Err("Stripe billing not configured".into());
+        }
         let record = self
             .get_record(&user.account_id)
             .await?
@@ -408,6 +571,9 @@ impl BillingService {
     }
 
     pub async fn handle_webhook(&self, headers: &HeaderMap, body: &[u8]) -> Result<(), String> {
+        if !self.stripe_configured() {
+            return Err("Stripe billing not configured".into());
+        }
         if !self.webhook_secret.is_empty() {
             verify_stripe_signature(headers, body, &self.webhook_secret)?;
         }
@@ -555,102 +721,142 @@ impl BillingService {
     }
 
     async fn get_record(&self, account_id: &str) -> Result<Option<BillingRecord>, String> {
-        let result = self
-            .dynamo
-            .get_item()
-            .table_name(&self.table)
-            .key("pk", AttributeValue::S(format!("ACCOUNT#{account_id}")))
-            .key("sk", AttributeValue::S("BILLING".into()))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(result.item.map(record_from_item))
+        match &self.store {
+            BillingStore::Memory(state) => Ok(state.read().await.records.get(account_id).cloned()),
+            BillingStore::Dynamo { table, client } => {
+                let result = client
+                    .get_item()
+                    .table_name(table)
+                    .key("pk", AttributeValue::S(format!("ACCOUNT#{account_id}")))
+                    .key("sk", AttributeValue::S("BILLING".into()))
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(result.item.map(record_from_item))
+            }
+        }
     }
 
     async fn find_by_customer(&self, customer_id: &str) -> Result<Option<BillingRecord>, String> {
-        // Sparse path: scan filtered — fine for early accounts; replace with GSI later.
-        let result = self
-            .dynamo
-            .scan()
-            .table_name(&self.table)
-            .filter_expression("stripe_customer_id = :c")
-            .expression_attribute_values(":c", AttributeValue::S(customer_id.into()))
-            .limit(1)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(result
-            .items
-            .and_then(|mut items| items.pop())
-            .map(record_from_item))
+        match &self.store {
+            BillingStore::Memory(state) => Ok(state
+                .read()
+                .await
+                .records
+                .values()
+                .find(|record| {
+                    record
+                        .stripe_customer_id
+                        .as_deref()
+                        .is_some_and(|id| id == customer_id)
+                })
+                .cloned()),
+            BillingStore::Dynamo { table, client } => {
+                let result = client
+                    .scan()
+                    .table_name(table)
+                    .filter_expression("stripe_customer_id = :c")
+                    .expression_attribute_values(":c", AttributeValue::S(customer_id.into()))
+                    .limit(1)
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(result
+                    .items
+                    .and_then(|mut items| items.pop())
+                    .map(record_from_item))
+            }
+        }
     }
 
     async fn put_record(&self, record: &BillingRecord) -> Result<(), String> {
-        let mut item = HashMap::new();
-        item.insert(
-            "pk".into(),
-            AttributeValue::S(format!("ACCOUNT#{}", record.account_id)),
-        );
-        item.insert("sk".into(), AttributeValue::S("BILLING".into()));
-        item.insert(
-            "account_id".into(),
-            AttributeValue::S(record.account_id.clone()),
-        );
-        item.insert(
-            "plan".into(),
-            AttributeValue::S(plan_str(record.plan).into()),
-        );
-        item.insert(
-            "status".into(),
-            AttributeValue::S(status_str(record.status).into()),
-        );
-        if let Some(email) = &record.email {
-            item.insert("email".into(), AttributeValue::S(email.clone()));
+        let item = billing_record_item(record);
+        match &self.store {
+            BillingStore::Memory(state) => {
+                state
+                    .write()
+                    .await
+                    .records
+                    .insert(record.account_id.clone(), record.clone());
+                Ok(())
+            }
+            BillingStore::Dynamo { table, client } => {
+                client
+                    .put_item()
+                    .table_name(table)
+                    .set_item(Some(item))
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
         }
-        if let Some(id) = &record.stripe_customer_id {
-            item.insert("stripe_customer_id".into(), AttributeValue::S(id.clone()));
-        }
-        if let Some(id) = &record.stripe_subscription_id {
-            item.insert(
-                "stripe_subscription_id".into(),
-                AttributeValue::S(id.clone()),
-            );
-        }
-        if let Some(end) = &record.current_period_end {
-            item.insert("current_period_end".into(), AttributeValue::S(end.clone()));
-        }
-        self.dynamo
-            .put_item()
-            .table_name(&self.table)
-            .set_item(Some(item))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(())
     }
 }
 
-fn status_from_record(record: &BillingRecord, usage: PlanUsage) -> BillingAccountStatus {
-    // v1.1: Free always can_purchase (enforced via purchasing_actions caps).
-    // Paid plans need Active/Trialing.
-    let can_purchase = match record.plan {
+fn status_from_record(
+    record: &BillingRecord,
+    override_plan: Option<PlanOverride>,
+    usage: PlanUsage,
+) -> BillingAccountStatus {
+    let now = chrono::Utc::now();
+    let active_override = override_plan.filter(|entry| {
+        entry
+            .expires_at
+            .as_deref()
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+            .is_none_or(|expires| expires > now)
+    });
+
+    let (plan, status, plan_source, admin_expires_at) = if let Some(entry) = active_override {
+        (
+            entry.plan,
+            BillingStatus::Active,
+            PlanSource::Admin,
+            entry.expires_at.clone(),
+        )
+    } else if record.plan != BillingPlan::Free
+        && matches!(
+            record.status,
+            BillingStatus::Active | BillingStatus::Trialing | BillingStatus::PastDue
+        )
+    {
+        (
+            record.plan,
+            record.status,
+            PlanSource::Stripe,
+            None,
+        )
+    } else {
+        (
+            BillingPlan::Free,
+            if matches!(record.status, BillingStatus::Canceled) {
+                BillingStatus::Canceled
+            } else {
+                BillingStatus::None
+            },
+            PlanSource::Free,
+            None,
+        )
+    };
+
+    let can_purchase = match plan {
         BillingPlan::Free => true,
         BillingPlan::Growth | BillingPlan::Scale => {
-            matches!(
-                record.status,
-                BillingStatus::Active | BillingStatus::Trialing
-            )
+            matches!(status, BillingStatus::Active | BillingStatus::Trialing)
         }
     };
-    let limits = limits_for(record.plan);
+    let limits = limits_for(plan);
     BillingAccountStatus {
-        plan: record.plan,
-        status: record.status,
+        plan,
+        status,
+        plan_source,
         can_purchase,
         limits,
         usage,
         stripe_customer_id: record.stripe_customer_id.clone(),
         current_period_end: record.current_period_end.clone(),
+        admin_expires_at,
     }
 }
 
@@ -679,16 +885,118 @@ impl CapError {
     }
 }
 
-fn free_status_payload(can_purchase: bool) -> BillingAccountStatus {
+fn free_status_payload(active_boms_count: u32, can_purchase: bool) -> BillingAccountStatus {
     let plan = BillingPlan::Free;
     BillingAccountStatus {
         plan,
         status: BillingStatus::None,
+        plan_source: PlanSource::Free,
         can_purchase,
         limits: limits_for(plan),
-        usage: empty_usage(),
+        usage: usage_with_boms(active_boms_count, empty_usage()),
         stripe_customer_id: None,
         current_period_end: None,
+        admin_expires_at: None,
+    }
+}
+
+fn billing_record_item(record: &BillingRecord) -> HashMap<String, AttributeValue> {
+    let mut item = HashMap::new();
+    item.insert(
+        "pk".into(),
+        AttributeValue::S(format!("ACCOUNT#{}", record.account_id)),
+    );
+    item.insert("sk".into(), AttributeValue::S("BILLING".into()));
+    item.insert(
+        "account_id".into(),
+        AttributeValue::S(record.account_id.clone()),
+    );
+    item.insert(
+        "plan".into(),
+        AttributeValue::S(plan_str(record.plan).into()),
+    );
+    item.insert(
+        "status".into(),
+        AttributeValue::S(status_str(record.status).into()),
+    );
+    if let Some(email) = &record.email {
+        item.insert("email".into(), AttributeValue::S(email.clone()));
+    }
+    if let Some(id) = &record.stripe_customer_id {
+        item.insert("stripe_customer_id".into(), AttributeValue::S(id.clone()));
+    }
+    if let Some(id) = &record.stripe_subscription_id {
+        item.insert(
+            "stripe_subscription_id".into(),
+            AttributeValue::S(id.clone()),
+        );
+    }
+    if let Some(end) = &record.current_period_end {
+        item.insert("current_period_end".into(), AttributeValue::S(end.clone()));
+    }
+    item
+}
+
+fn plan_override_item(
+    account_id: &str,
+    plan: BillingPlan,
+    expires_at: Option<&str>,
+    note: Option<&str>,
+) -> HashMap<String, AttributeValue> {
+    let mut item = HashMap::new();
+    item.insert(
+        "pk".into(),
+        AttributeValue::S(format!("ACCOUNT#{account_id}")),
+    );
+    item.insert("sk".into(), AttributeValue::S("PLAN_OVERRIDE".into()));
+    item.insert(
+        "account_id".into(),
+        AttributeValue::S(account_id.to_string()),
+    );
+    item.insert("plan".into(), AttributeValue::S(plan_str(plan).into()));
+    if let Some(expires_at) = expires_at {
+        item.insert(
+            "admin_expires_at".into(),
+            AttributeValue::S(expires_at.to_string()),
+        );
+    }
+    if let Some(note) = note {
+        item.insert("admin_note".into(), AttributeValue::S(note.to_string()));
+    }
+    item
+}
+
+fn plan_override_from_item(item: HashMap<String, AttributeValue>) -> Option<PlanOverride> {
+    let get_s = |key: &str| {
+        item.get(key)
+            .and_then(|v| v.as_s().ok())
+            .map(|s| s.to_string())
+    };
+    let plan = match get_s("plan").as_deref() {
+        Some("scale") => BillingPlan::Scale,
+        Some("growth") => BillingPlan::Growth,
+        _ => return None,
+    };
+    Some(PlanOverride {
+        plan,
+        expires_at: get_s("admin_expires_at"),
+        note: get_s("admin_note"),
+    })
+}
+
+fn usage_from_item(item: &HashMap<String, AttributeValue>) -> PlanUsage {
+    let n = |key: &str| {
+        item.get(key)
+            .and_then(|v| v.as_n().ok())
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(0)
+    };
+    PlanUsage {
+        analyses_count: n("analyses_count"),
+        lines_count: n("lines_count"),
+        purchasing_actions_count: n("purchasing_actions_count"),
+        orders_count: n("orders_count"),
+        active_boms_count: 0,
     }
 }
 
@@ -795,13 +1103,151 @@ pub async fn billing_status(
         Err(response) => return response,
     };
 
+    let active_boms_count = state
+        .bom_store
+        .list_boms(&user.account_id)
+        .await
+        .map(|boms| boms.len() as u32)
+        .unwrap_or(0);
+
     let Some(billing) = &state.billing else {
-        // Without Stripe, still expose Free entitlements; local unpaid env can purchase.
-        return Json(free_status_payload(true)).into_response();
+        return Json(free_status_payload(active_boms_count, true)).into_response();
     };
 
-    match billing.status_for(&user).await {
+    match billing.status_for(&user, active_boms_count).await {
         Ok(status) => Json(status).into_response(),
+        Err(error) => (StatusCode::BAD_GATEWAY, Json(json!({"error": error}))).into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AdminSetPlanBody {
+    pub account_id: String,
+    pub plan: String,
+    pub expires_at: Option<String>,
+    pub note: Option<String>,
+}
+
+fn verify_admin_secret(headers: &HeaderMap) -> Result<(), Response> {
+    let expected = std::env::var("PROKURO_ADMIN_SECRET")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let Some(expected) = expected else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "admin API not configured"})),
+        )
+            .into_response());
+    };
+    let provided = headers
+        .get("x-prokuro-admin-secret")
+        .and_then(|value| value.to_str().ok());
+    if provided != Some(expected.as_str()) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "invalid admin secret"})),
+        )
+            .into_response());
+    }
+    Ok(())
+}
+
+fn parse_admin_plan(plan: &str) -> Result<BillingPlan, Response> {
+    match plan.to_ascii_lowercase().as_str() {
+        "growth" => Ok(BillingPlan::Growth),
+        "scale" => Ok(BillingPlan::Scale),
+        "free" => Ok(BillingPlan::Free),
+        _ => Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "plan must be free, growth, or scale"})),
+        )
+            .into_response()),
+    }
+}
+
+pub async fn billing_admin_set_plan(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<AdminSetPlanBody>, JsonRejection>,
+) -> impl IntoResponse {
+    if let Err(response) = verify_admin_secret(&headers) {
+        return response;
+    }
+    let Some(billing) = &state.billing else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "billing store not configured"})),
+        )
+            .into_response();
+    };
+    let body = match payload {
+        Ok(Json(body)) => body,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": error.body_text()})),
+            )
+                .into_response();
+        }
+    };
+    if body.account_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "account_id is required"})),
+        )
+            .into_response();
+    }
+    let plan = match parse_admin_plan(&body.plan) {
+        Ok(plan) => plan,
+        Err(response) => return response,
+    };
+    let result = if plan == BillingPlan::Free {
+        billing.clear_admin_plan(&body.account_id).await
+    } else {
+        billing
+            .set_admin_plan(
+                &body.account_id,
+                plan,
+                body.expires_at.clone(),
+                body.note.clone(),
+            )
+            .await
+    };
+    match result {
+        Ok(()) => Json(json!({
+            "account_id": body.account_id,
+            "plan": plan_str(plan),
+            "expires_at": body.expires_at,
+        }))
+        .into_response(),
+        Err(error) => (StatusCode::BAD_GATEWAY, Json(json!({"error": error}))).into_response(),
+    }
+}
+
+pub async fn billing_admin_clear_plan(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    if let Err(response) = verify_admin_secret(&headers) {
+        return response;
+    }
+    let Some(billing) = &state.billing else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "billing store not configured"})),
+        )
+            .into_response();
+    };
+    let Some(account_id) = query.get("account_id").filter(|value| !value.is_empty()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "account_id query param is required"})),
+        )
+            .into_response();
+    };
+    match billing.clear_admin_plan(account_id).await {
+        Ok(()) => Json(json!({"account_id": account_id, "cleared": true})).into_response(),
         Err(error) => (StatusCode::BAD_GATEWAY, Json(json!({"error": error}))).into_response(),
     }
 }
@@ -946,7 +1392,7 @@ mod tests {
             status: BillingStatus::Active,
             current_period_end: None,
         };
-        assert!(status_from_record(&record, empty_usage()).can_purchase);
+        assert!(status_from_record(&record, None, empty_usage()).can_purchase);
 
         let free = BillingRecord {
             plan: BillingPlan::Free,
@@ -955,9 +1401,22 @@ mod tests {
             stripe_subscription_id: None,
             ..record.clone()
         };
-        let free_status = status_from_record(&free, empty_usage());
+        let free_status = status_from_record(&free, None, empty_usage());
         assert!(free_status.can_purchase);
         assert_eq!(free_status.limits.active_boms, 1);
         assert_eq!(free_status.limits.purchasing_actions_per_month, 5);
+
+        let admin = status_from_record(
+            &free,
+            Some(PlanOverride {
+                plan: BillingPlan::Growth,
+                expires_at: None,
+                note: Some("pilot".into()),
+            }),
+            empty_usage(),
+        );
+        assert_eq!(admin.plan, BillingPlan::Growth);
+        assert_eq!(admin.plan_source, PlanSource::Admin);
+        assert_eq!(admin.limits.seats, 2);
     }
 }

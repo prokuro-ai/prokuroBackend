@@ -364,14 +364,20 @@ mod tests {
         let state = AppState {
             auth: None,
             bom_store: Arc::new(BomStore::local(temp.path().to_path_buf())),
-            billing: None,
+            billing: Some(crate::billing::BillingService::memory()),
             team,
         };
         (state, temp)
     }
 
     async fn with_plan(state: &AppState, account_id: &str, plan: BillingPlan) {
-        state.team.set_plan_override(account_id, plan).await;
+        state
+            .billing
+            .as_ref()
+            .expect("billing")
+            .set_admin_plan(account_id, plan, None, Some("test".into()))
+            .await
+            .expect("set admin plan");
     }
 
     async fn json_request(

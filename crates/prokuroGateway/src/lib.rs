@@ -14,7 +14,8 @@ use tower_http::cors::{Any, CorsLayer};
 use analyze::{apply_tariff_results, finalize_analyze, merge, AnalyzeResult};
 use auth::require_write;
 use billing::{
-    billing_checkout, billing_portal, billing_status, billing_webhook,
+    billing_admin_clear_plan, billing_admin_set_plan, billing_checkout, billing_portal,
+    billing_status, billing_webhook,
 };
 use boms::handlers::{
     add_line, create_bom, delete_bom, delete_line, get_bom, list_boms, patch_line, put_bom,
@@ -81,6 +82,7 @@ pub fn app(state: AppState) -> Router {
         .route("/v1/billing/checkout", post(billing_checkout))
         .route("/v1/billing/portal", post(billing_portal))
         .route("/v1/billing/webhook", post(billing_webhook))
+        .route("/v1/billing/admin/plan", post(billing_admin_set_plan).delete(billing_admin_clear_plan))
         .route("/v1/team/members", get(list_members))
         .route("/v1/team/members/{user_id}", patch(patch_member).delete(remove_member))
         .route("/v1/team/invites", post(create_invite))

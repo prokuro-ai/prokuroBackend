@@ -144,12 +144,24 @@ pub struct PlanUsage {
     pub lines_count: u32,
     pub purchasing_actions_count: u32,
     pub orders_count: u32,
+    #[serde(default)]
+    pub active_boms_count: u32,
+}
+
+/// Where the effective plan came from: Stripe subscription, admin override, or default Free.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanSource {
+    Stripe,
+    Admin,
+    Free,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BillingAccountStatus {
     pub plan: BillingPlan,
     pub status: BillingStatus,
+    pub plan_source: PlanSource,
     /// v1.1: true for Free (small purchasing caps) and paid Active/Trialing.
     pub can_purchase: bool,
     pub limits: PlanLimits,
@@ -158,6 +170,8 @@ pub struct BillingAccountStatus {
     pub stripe_customer_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_period_end: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_expires_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

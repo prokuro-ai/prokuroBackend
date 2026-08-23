@@ -9,7 +9,7 @@ use crate::auth::{authenticate, AuthService, AuthUser};
 use crate::billing::BillingService;
 use crate::boms::store::BomStore;
 use crate::team::TeamStore;
-use prokuro_types::purchasing::{BillingPlan, BillingStatus};
+use prokuro_types::purchasing::BillingPlan;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -49,33 +49,17 @@ impl AppState {
     }
 
     pub async fn plan_for(&self, user: &AuthUser) -> BillingPlan {
-        if let Some(plan) = self.team.plan_override(&user.account_id).await {
-            return plan;
-        }
+        let active_boms_count = self
+            .bom_store
+            .list_boms(&user.account_id)
+            .await
+            .map(|boms| boms.len() as u32)
+            .unwrap_or(0);
         if let Some(billing) = &self.billing {
-            if let Ok(status) = billing.status_for(user).await {
-                // Paid plans win. Bare Free + none/canceled falls through to
-                // PROKURO_DEFAULT_PLAN so seat invites work before Stripe checkout.
-                if status.plan != BillingPlan::Free {
-                    return status.plan;
-                }
-                if !matches!(status.status, BillingStatus::None | BillingStatus::Canceled) {
-                    return status.plan;
-                }
+            if let Ok(status) = billing.status_for(user, active_boms_count).await {
+                return status.plan;
             }
         }
-        default_plan_from_env()
-    }
-}
-
-fn default_plan_from_env() -> BillingPlan {
-    match std::env::var("PROKURO_DEFAULT_PLAN")
-        .unwrap_or_default()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "growth" => BillingPlan::Growth,
-        "scale" => BillingPlan::Scale,
-        _ => BillingPlan::Free,
+        BillingPlan::Free
     }
 }
