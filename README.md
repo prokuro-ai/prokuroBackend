@@ -72,10 +72,18 @@ PORT=3000 PARSER_URL=http://localhost:3001 ENRICHMENT_URL=http://localhost:3002 
 
 Membership is resolved in the gateway: Cognito `sub` (or `Bearer test:<user_id>`) maps to a team `account_id`. Pending invites count toward plan seats (Free=1, Growth=2, Scale=5) until accepted, revoked, or expired (7 days).
 
+Pilot onboarding uses the admin plan API (no customer-facing plan setter):
+
+```bash
+curl -sS -X POST http://localhost:3000/v1/billing/admin/plan \
+  -H "X-Prokuro-Admin-Secret: $PROKURO_ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"account_id":"<cognito-sub>","plan":"growth","note":"pilot"}'
+```
+
 ```bash
 # Gateway (memory members store; no Dynamo required)
 PROKURO_LOCAL_AUTH_BYPASS=1 \
-PROKURO_DEFAULT_PLAN=growth \
 APP_BASE_URL=http://localhost:3010 \
 PORT=3000 cargo run -p prokuro-gateway --bin prokuro-gateway
 

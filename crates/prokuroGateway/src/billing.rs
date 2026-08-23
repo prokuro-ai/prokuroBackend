@@ -222,9 +222,14 @@ impl BillingService {
         self.required
     }
 
+    /// Enforce plan caps whenever the Dynamo billing table is configured (production).
+    fn caps_enforced(&self) -> bool {
+        matches!(&self.store, BillingStore::Dynamo { .. })
+    }
+
     /// v1.1: Free can purchase under caps; paid needs Active/Trialing when billing required.
     pub async fn ensure_can_purchase(&self, user: &AuthUser) -> Result<(), PurchaseStatus> {
-        if !self.required {
+        if !self.caps_enforced() && !self.required {
             return Ok(());
         }
         let status = self
@@ -243,7 +248,7 @@ impl BillingService {
         user: &AuthUser,
         is_order: bool,
     ) -> Result<(), CapError> {
-        if !self.required {
+        if !self.caps_enforced() && !self.required {
             return Ok(());
         }
         self.ensure_can_purchase(user)
@@ -313,7 +318,7 @@ impl BillingService {
         active_bom_count: u32,
         line_count: u32,
     ) -> Result<(), CapError> {
-        if !self.required {
+        if !self.caps_enforced() && !self.required {
             return Ok(());
         }
         let status = self.status_for(user, active_bom_count).await.map_err(|_| CapError {
@@ -654,7 +659,7 @@ impl BillingService {
         };
 
         if let Some(period_end) = obj.get("current_period_end").and_then(|v| v.as_i64()) {
-            record.current_period_end = Some(period_end.to_string());
+            record.current_period_end = unix_timestamp_to_rfc3339(period_end);
         }
 
         // Infer plan from price id when present.
@@ -668,12 +673,6 @@ impl BillingService {
             } else if price == self.price_growth {
                 record.plan = BillingPlan::Growth;
             }
-        } else if matches!(
-            record.status,
-            BillingStatus::Active | BillingStatus::Trialing
-        ) && record.plan == BillingPlan::Free
-        {
-            record.plan = BillingPlan::Growth;
         }
 
         if matches!(record.status, BillingStatus::Canceled | BillingStatus::None) {
@@ -842,9 +841,10 @@ fn status_from_record(
 
     let can_purchase = match plan {
         BillingPlan::Free => true,
-        BillingPlan::Growth | BillingPlan::Scale => {
-            matches!(status, BillingStatus::Active | BillingStatus::Trialing)
-        }
+        BillingPlan::Growth | BillingPlan::Scale => matches!(
+            status,
+            BillingStatus::Active | BillingStatus::Trialing
+        ) || plan_source == PlanSource::Admin,
     };
     let limits = limits_for(plan);
     BillingAccountStatus {
@@ -855,9 +855,24 @@ fn status_from_record(
         limits,
         usage,
         stripe_customer_id: record.stripe_customer_id.clone(),
-        current_period_end: record.current_period_end.clone(),
+        current_period_end: normalize_period_end(record.current_period_end.as_deref()),
         admin_expires_at,
     }
+}
+
+fn unix_timestamp_to_rfc3339(ts: i64) -> Option<String> {
+    chrono::DateTime::from_timestamp(ts, 0).map(|value| value.to_rfc3339())
+}
+
+fn normalize_period_end(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if let Ok(ts) = value.parse::<i64>() {
+        return unix_timestamp_to_rfc3339(ts);
+    }
+    Some(value.to_string())
 }
 
 #[derive(Debug, Clone)]

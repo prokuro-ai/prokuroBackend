@@ -8,7 +8,7 @@ use serde_json::json;
 use crate::auth::{require_manage_team, TeamRole};
 use crate::entitlements::{limits_for, plan_slug};
 use crate::state::AppState;
-use crate::team::mail::{accept_url, InviteMailer};
+use crate::team::mail::{accept_url, InviteEmailDelivery, InviteMailer};
 use crate::team::store::{InviteRecord, MemberRecord, TeamError};
 
 #[derive(Debug, Deserialize)]
@@ -107,7 +107,12 @@ pub async fn create_invite(
     {
         Ok(invite) => {
             let url = accept_url(&invite.id);
-            let email_sent = send_invite_email(&invite.email, &url, role).await;
+            let (email_delivery, email_error, email_sent) = match send_invite_email(&invite.email, &url, role).await {
+                Some(Ok(InviteEmailDelivery::Queued)) => ("queued", None, true),
+                Some(Ok(InviteEmailDelivery::Sent)) => ("sent", None, true),
+                Some(Err(error)) => ("failed", Some(error), false),
+                None => ("not_configured", None, false),
+            };
             (
                 StatusCode::CREATED,
                 Json(json!({
@@ -117,6 +122,8 @@ pub async fn create_invite(
                     "expires_at": invite.expires_at,
                     "accept_url": url,
                     "email_sent": email_sent,
+                    "email_delivery": email_delivery,
+                    "email_error": email_error,
                 })),
             )
                 .into_response()
@@ -232,18 +239,12 @@ pub async fn accept_invite(
     }
 }
 
-async fn send_invite_email(to: &str, accept_url: &str, role: TeamRole) -> bool {
-    let Some(mailer) = InviteMailer::from_env().await else {
-        tracing::info!(to, accept_url, "team invite created; email not sent (SES not configured)");
-        return false;
-    };
-    match mailer.send_invite(to, accept_url, role).await {
-        Ok(()) => true,
-        Err(error) => {
-            tracing::warn!(to, %error, "team invite email failed; accept_url still returned");
-            false
-        }
-    }
+async fn send_invite_email(to: &str, accept_url: &str, role: TeamRole) -> Option<Result<InviteEmailDelivery, String>> {
+    let mailer = InviteMailer::from_env().await?;
+    Some(mailer.send_invite(to, accept_url, role).await.map_err(|error| {
+        tracing::warn!(to, %error, "team invite email failed; accept_url still returned");
+        error
+    }))
 }
 
 fn member_json(member: &MemberRecord) -> serde_json::Value {
@@ -501,6 +502,7 @@ mod tests {
         assert_eq!(status, StatusCode::CREATED);
         let token = invite["id"].as_str().expect("invite id");
         assert_eq!(invite["email_sent"], false);
+        assert_eq!(invite["email_delivery"], "not_configured");
         assert!(invite["accept_url"].as_str().unwrap().contains(token));
 
         let (status, _) = json_request(

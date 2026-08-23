@@ -3,6 +3,14 @@ use serde_json::json;
 
 use crate::auth::TeamRole;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InviteEmailDelivery {
+    /// Published to SNS; Lambda delivers via SES asynchronously.
+    Queued,
+    /// Sent directly from the gateway via SES (no SNS topic configured).
+    Sent,
+}
+
 pub struct InviteMailer {
     sns_topic_arn: Option<String>,
     sns_client: Option<aws_sdk_sns::Client>,
@@ -32,7 +40,7 @@ impl InviteMailer {
         to: &str,
         accept_url: &str,
         role: TeamRole,
-    ) -> Result<(), String> {
+    ) -> Result<InviteEmailDelivery, String> {
         let role_label = match role {
             TeamRole::Admin => "Admin",
             TeamRole::ReadOnly => "Read only",
@@ -62,7 +70,7 @@ impl InviteMailer {
                 .send()
                 .await
                 .map_err(|e| e.to_string())?;
-            return Ok(());
+            return Ok(InviteEmailDelivery::Queued);
         }
 
         let ses = self
@@ -96,7 +104,7 @@ impl InviteMailer {
             .send()
             .await
             .map_err(|e| e.to_string())?;
-        Ok(())
+        Ok(InviteEmailDelivery::Sent)
     }
 }
 
