@@ -345,6 +345,13 @@ pub async fn put_bom(
         return response;
     }
 
+    if let Some(billing) = &state.billing {
+        let line_count = body.lines.len() as u32;
+        if let Err(cap) = billing.ensure_bom_update(&user, line_count).await {
+            return cap.into_response();
+        }
+    }
+
     match state
         .bom_store
         .replace_lines(&user.account_id, &bom_id, body.version, body.lines)

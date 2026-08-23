@@ -380,6 +380,30 @@ impl BillingService {
         Ok(())
     }
 
+    /// Enforces per-BOM line cap on updates/re-analyze (does not increment monthly usage).
+    pub async fn ensure_bom_update(&self, user: &AuthUser, line_count: u32) -> Result<(), CapError> {
+        if !self.caps_enforced() && !self.required {
+            return Ok(());
+        }
+        let status = self.status_for(user, 0).await.map_err(|_| CapError {
+            plan: BillingPlan::Free,
+            cap: "usage",
+            used: 0,
+            limit: 0,
+            purchase_status: None,
+        })?;
+        if line_count > status.limits.max_lines_per_bom {
+            return Err(CapError {
+                plan: status.plan,
+                cap: "max_lines_per_bom",
+                used: line_count,
+                limit: status.limits.max_lines_per_bom,
+                purchase_status: None,
+            });
+        }
+        Ok(())
+    }
+
     async fn usage_sk() -> String {
         let month = chrono::Utc::now().format("%Y-%m").to_string();
         format!("USAGE#{month}")
@@ -1433,5 +1457,37 @@ mod tests {
         assert_eq!(admin.plan, BillingPlan::Growth);
         assert_eq!(admin.plan_source, PlanSource::Admin);
         assert_eq!(admin.limits.seats, 2);
+        assert!(admin.can_purchase);
+    }
+
+    #[test]
+    fn normalize_period_end_converts_unix_seconds() {
+        let iso = normalize_period_end(Some("1710000000"));
+        assert!(iso
+            .as_ref()
+            .expect("iso")
+            .starts_with("2024-03-"));
+    }
+
+    #[test]
+    fn normalize_period_end_passes_through_rfc3339() {
+        let raw = "2026-08-30T15:46:38.178491650+00:00";
+        assert_eq!(normalize_period_end(Some(raw)).as_deref(), Some(raw));
+    }
+
+    #[test]
+    fn active_stripe_subscription_without_price_does_not_default_to_growth() {
+        let record = BillingRecord {
+            account_id: "acc".into(),
+            email: None,
+            stripe_customer_id: Some("cus_x".into()),
+            stripe_subscription_id: Some("sub_x".into()),
+            plan: BillingPlan::Free,
+            status: BillingStatus::Active,
+            current_period_end: None,
+        };
+        let status = status_from_record(&record, None, empty_usage());
+        assert_eq!(status.plan, BillingPlan::Free);
+        assert_eq!(status.plan_source, PlanSource::Free);
     }
 }
