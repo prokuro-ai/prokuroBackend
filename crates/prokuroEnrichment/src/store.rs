@@ -167,6 +167,19 @@ impl PartStore {
         Ok(())
     }
 
+    /// Delete the current snapshot so a re-queued unresolved item will be looked up again.
+    pub async fn delete_snapshot(&self, pk: &str) -> Result<(), StoreError> {
+        self.client
+            .delete_item()
+            .table_name(&self.parts_table)
+            .key("pk", AttributeValue::S(pk.into()))
+            .key("sk", AttributeValue::S(CURRENT_SK.into()))
+            .send()
+            .await
+            .map_err(|e| StoreError::Dynamo(e.to_string()))?;
+        Ok(())
+    }
+
     /// Distinct partition keys currently stored (for daily sync). MVP: full Scan.
     pub async fn list_part_keys(&self) -> Result<Vec<String>, StoreError> {
         let mut keys = HashSet::new();

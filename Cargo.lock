@@ -164,6 +164,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-bedrockruntime"
+version = "1.135.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e74b780f2f36912bae71b4f4f8ed9a0a88832b4681a1add3caf5ca25dbc8ab2d"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-sigv4",
+ "aws-smithy-async",
+ "aws-smithy-eventstream",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.4.0",
+ "http-body-util",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-dynamodb"
 version = "1.116.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2237,6 +2265,7 @@ name = "prokuro-gateway"
 version = "0.1.0"
 dependencies = [
  "aws-config",
+ "aws-sdk-bedrockruntime",
  "aws-sdk-dynamodb",
  "aws-sdk-s3",
  "aws-sdk-sesv2",

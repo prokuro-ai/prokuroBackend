@@ -112,6 +112,7 @@ fn sample_line() -> AnalyzedLine {
         tariff_disclaimer: None,
         entity_list_match: None,
         entity_list_notes: None,
+        agent_brief: None,
     }
 }
 

@@ -9,7 +9,7 @@ use chrono::{SecondsFormat, Utc};
 use serde::Deserialize;
 use tokio::sync::RwLock;
 
-use super::dto::{Product, ProductDetailsResponse};
+use super::dto::{KeywordSearchResponse, Product, ProductDetailsResponse};
 use super::rate_limit::RateLimiter;
 use crate::types::{normalize_mpn, PartQuery, PartResult, Provider, ProviderError};
 use prokuro_types::enrichment::{AvailabilityStatus, LifecycleStatus, MatchStatus};
@@ -179,6 +179,89 @@ impl DigiKeyProvider {
             })
             .await
     }
+
+    /// Keyword search when ProductDetails 404s (messy BOMs / non-canonical MPNs).
+    async fn keyword_search(
+        &self,
+        keywords: &str,
+    ) -> Result<Option<Product>, ProviderError> {
+        let url = format!("{}/products/v4/search/keyword", self.base_url);
+        let body = serde_json::json!({
+            "Keywords": keywords,
+            "Limit": 10,
+            "Offset": 0,
+        });
+        self.rate
+            .with_permit(|| async {
+                let token = self.access_token().await?;
+                let mut attempt = 0u32;
+                loop {
+                    let response = self
+                        .client
+                        .post(&url)
+                        .header("Authorization", format!("Bearer {token}"))
+                        .header("X-DIGIKEY-Client-Id", &self.client_id)
+                        .header("X-DIGIKEY-Locale-Site", "US")
+                        .header("X-DIGIKEY-Locale-Language", "en")
+                        .header("X-DIGIKEY-Locale-Currency", "USD")
+                        .header("Content-Type", "application/json")
+                        .json(&body)
+                        .send()
+                        .await
+                        .map_err(|e| ProviderError::Request(e.to_string()))?;
+
+                    observe_rate_headers(&self.rate, response.headers());
+
+                    let status = response.status();
+                    if status.as_u16() == 429 {
+                        crate::metrics::digikey_http_429();
+                        let retry_after = response
+                            .headers()
+                            .get("Retry-After")
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|s| s.parse::<u64>().ok())
+                            .unwrap_or(1u64 << attempt)
+                            .max(1);
+                        self.rate.pause_for(retry_after).await;
+                        if attempt >= 3 {
+                            crate::metrics::digikey_rate_limited();
+                            return Err(ProviderError::RateLimited);
+                        }
+                        attempt += 1;
+                        continue;
+                    }
+                    if status.as_u16() == 404 {
+                        return Ok(None);
+                    }
+                    if !status.is_success() {
+                        let body = response.text().await.unwrap_or_default();
+                        return Err(ProviderError::Request(format!("{status}: {body}")));
+                    }
+                    let parsed: KeywordSearchResponse = response
+                        .json()
+                        .await
+                        .map_err(|e| ProviderError::Request(e.to_string()))?;
+                    let products = parsed.products.unwrap_or_default();
+                    if products.is_empty() {
+                        return Ok(None);
+                    }
+                    let needle = normalize_mpn(keywords);
+                    let exact_idx = products.iter().position(|p| {
+                        p.manufacturer_product_number
+                            .as_deref()
+                            .map(normalize_mpn)
+                            .as_deref()
+                            == Some(needle.as_str())
+                    });
+                    let best = match exact_idx {
+                        Some(i) => products.into_iter().nth(i),
+                        None => products.into_iter().next(),
+                    };
+                    return Ok(best);
+                }
+            })
+            .await
+    }
 }
 
 fn observe_rate_headers(rate: &RateLimiter, headers: &reqwest::header::HeaderMap) {
@@ -205,17 +288,34 @@ impl Provider for DigiKeyProvider {
         if mpn.is_empty() {
             return Ok(None);
         }
-        let Some(details) = self.fetch_product(&mpn).await? else {
+        if let Some(details) = self.fetch_product(&mpn).await? {
+            if let Some(product) = details.product {
+                return Ok(Some(map_product(product, MatchStatus::Exact)));
+            }
+        }
+
+        // ProductDetails miss → KeywordSearch (still Digi-Key) before Mouser fallback.
+        let keywords = match query.manufacturer.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(mfr) => format!("{mpn} {mfr}"),
+            None => mpn.clone(),
+        };
+        let Some(product) = self.keyword_search(&keywords).await? else {
             return Ok(None);
         };
-        let Some(product) = details.product else {
+        let matched = product
+            .manufacturer_product_number
+            .as_deref()
+            .map(normalize_mpn)
+            .unwrap_or_default();
+        // Only accept exact MPN hits from keyword search — never the first fuzzy neighbor.
+        if matched != mpn {
             return Ok(None);
-        };
-        Ok(Some(map_product(product)))
+        }
+        Ok(Some(map_product(product, MatchStatus::Exact)))
     }
 }
 
-fn map_product(product: Product) -> PartResult {
+fn map_product(product: Product, match_status: MatchStatus) -> PartResult {
     let total_avail = product.quantity_available.unwrap_or(0);
     let lifecycle = map_lifecycle(&product);
     let availability = if total_avail > 0 {
@@ -233,7 +333,7 @@ fn map_product(product: Product) -> PartResult {
         provider_part_id: product.digi_key_product_number,
         matched_mpn: product.manufacturer_product_number,
         matched_manufacturer: product.manufacturer.and_then(|m| m.name),
-        match_status: MatchStatus::Exact,
+        match_status,
         availability_status: availability,
         lifecycle_status: lifecycle,
         total_avail,

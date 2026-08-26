@@ -1,4 +1,4 @@
-//! Digi-Key ProductDetails JSON shapes (subset we map).
+//! Digi-Key ProductDetails / KeywordSearch JSON shapes (subset we map).
 
 use serde::Deserialize;
 
@@ -6,6 +6,12 @@ use serde::Deserialize;
 pub struct ProductDetailsResponse {
     #[serde(rename = "Product")]
     pub product: Option<Product>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct KeywordSearchResponse {
+    #[serde(rename = "Products")]
+    pub products: Option<Vec<Product>>,
 }
 
 #[derive(Debug, Deserialize)]

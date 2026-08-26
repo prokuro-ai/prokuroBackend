@@ -15,7 +15,7 @@ Rust backend for BOM parsing + enrichment + analyze API.
 1. **Serve** from DynamoDB (`pk` + `sk=CURRENT`). Cache hits never call Digi-Key.
 2. **Miss** → paced Digi-Key ProductDetails → upsert current row → return.
 3. **Nightly sync** refreshes every known part key (target ≤24h freshness under Digi-Key quota).
-4. Digi-Key **NoMatch** is stored for ops; the API returns **Pending** to the customer.
+4. Digi-Key **NoMatch** is stored after Digi-Key ProductDetails + KeywordSearch and optional Mouser Search all miss; the API returns **NoMatch** (not Pending) once resolved.
 5. OpenTelemetry metrics are instrumented; **export is off by default** (`OTEL_SDK_DISABLED=true`).
 
 ## DynamoDB (AWS via CDK)

@@ -7,6 +7,7 @@ use serde_json::json;
 
 use prokuro_types::pagination::{page_by_id, PageError, PageParams};
 
+use crate::agent_brief::ensure_agent_briefs;
 use crate::analyze::{apply_enrichment_results, finalize_analyze, AnalyzeResult, AnalyzedLine};
 use crate::auth::require_write;
 use crate::clients::enrichment::{EnrichInput, EnrichmentClient};
@@ -64,30 +65,38 @@ pub async fn get_bom(
 
     match state.bom_store.get_bom(&user.account_id, &bom_id).await {
         Ok(mut record) => {
+            let before = serde_json::to_string(&record.analyze).ok();
             if let Err(error) = refresh_enrichment(&mut record).await {
                 tracing::warn!(%error, bom_id, "read-through enrichment failed; returning stored analyze");
             } else {
-                let (score, at_risk, unknown_count, risk_band) =
-                    bom_summary_fields(&record.analyze);
-                let lines = record.analyze.summary.total;
-                if at_risk != record.summary.at_risk_count
-                    || (score - record.summary.overall_risk_score).abs() > f64::EPSILON
-                    || lines != record.summary.line_count
-                    || unknown_count != record.summary.unknown_count
-                    || risk_band != record.summary.risk_band
+                // refresh_enrichment already finalizes; re-score defensively before briefs.
+                finalize_analyze(&mut record.analyze);
+            }
+            ensure_agent_briefs(&mut record.analyze.lines).await;
+            finalize_analyze(&mut record.analyze);
+            let (score, at_risk, unknown_count, risk_band) =
+                bom_summary_fields(&record.analyze);
+            let lines = record.analyze.summary.total;
+            record.summary.at_risk_count = at_risk;
+            record.summary.overall_risk_score = score;
+            record.summary.line_count = lines;
+            record.summary.unknown_count = unknown_count;
+            record.summary.risk_band = risk_band;
+
+            let after = serde_json::to_string(&record.analyze).ok();
+            let analyze_changed = before != after;
+            if analyze_changed {
+                if let Err(error) = state
+                    .bom_store
+                    .update_analyze_and_summary(
+                        &user.account_id,
+                        &bom_id,
+                        &record.analyze,
+                        &record.summary,
+                    )
+                    .await
                 {
-                    record.summary.at_risk_count = at_risk;
-                    record.summary.overall_risk_score = score;
-                    record.summary.line_count = lines;
-                    record.summary.unknown_count = unknown_count;
-                    record.summary.risk_band = risk_band;
-                    if let Err(error) = state
-                        .bom_store
-                        .update_summary(&user.account_id, &bom_id, &record.summary)
-                        .await
-                    {
-                        tracing::warn!(%error, bom_id, "failed to persist refreshed BOM summary");
-                    }
+                    tracing::warn!(%error, bom_id, "failed to persist refreshed BOM analyze");
                 }
             }
             Json(record).into_response()
@@ -391,12 +400,15 @@ pub async fn patch_line(
         .patch_line(&user.account_id, &bom_id, line_index, body.version, patch)
         .await
     {
-        Ok(result) => Json(LineMutationResponse {
-            version: result.version,
-            line_index: result.line_index,
-            line: result.line,
-        })
-        .into_response(),
+        Ok(result) => {
+            enqueue_line_enrichment(&result.line).await;
+            Json(LineMutationResponse {
+                version: result.version,
+                line_index: result.line_index,
+                line: result.line,
+            })
+            .into_response()
+        }
         Err(error) => {
             mutation_error_response(&user.account_id, &bom_id, "patch_line", error).into_response()
         }
@@ -460,18 +472,43 @@ pub async fn add_line(
         .add_line(&user.account_id, &bom_id, body.version, input)
         .await
     {
-        Ok(result) => (
-            StatusCode::CREATED,
-            Json(LineMutationResponse {
-                version: result.version,
-                line_index: result.line_index,
-                line: result.line,
-            }),
-        )
-            .into_response(),
+        Ok(result) => {
+            enqueue_line_enrichment(&result.line).await;
+            (
+                StatusCode::CREATED,
+                Json(LineMutationResponse {
+                    version: result.version,
+                    line_index: result.line_index,
+                    line: result.line,
+                }),
+            )
+                .into_response()
+        }
         Err(error) => {
             mutation_error_response(&user.account_id, &bom_id, "add_line", error).into_response()
         }
+    }
+}
+
+async fn enqueue_line_enrichment(line: &AnalyzedLine) {
+    let mpn = line.mpn.clone().unwrap_or_default();
+    if mpn.trim().is_empty() {
+        return;
+    }
+    let pending = line.availability_status.eq_ignore_ascii_case("pending")
+        || line.match_status.eq_ignore_ascii_case("pending");
+    if !pending {
+        return;
+    }
+    let input = EnrichInput {
+        mpn,
+        manufacturer: line.manufacturer.clone(),
+    };
+    if let Err(error) = EnrichmentClient::from_env()
+        .enrich_cache_only(&[input])
+        .await
+    {
+        tracing::warn!(%error, "failed to enqueue enrichment after line edit");
     }
 }
 
@@ -622,6 +659,7 @@ mod tests {
             tariff_disclaimer: None,
             entity_list_match: None,
             entity_list_notes: None,
+            agent_brief: None,
         }
     }
 

@@ -31,6 +31,7 @@ use team::{
 };
 
 pub mod analyze;
+pub mod agent_brief;
 pub mod auth;
 pub mod billing;
 pub mod boms;

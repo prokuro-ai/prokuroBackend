@@ -85,6 +85,9 @@ pub struct AnalyzedLine {
     pub entity_list_match: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity_list_notes: Option<String>,
+    /// Bedrock / heuristic analyst brief for at-risk lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_brief: Option<String>,
 }
 
 pub fn merge(parse: ParseResult, enrich: Vec<EnrichResult>) -> AnalyzeResult {
@@ -130,6 +133,7 @@ pub fn merge(parse: ParseResult, enrich: Vec<EnrichResult>) -> AnalyzeResult {
                 tariff_disclaimer: None,
                 entity_list_match: None,
                 entity_list_notes: None,
+                agent_brief: None,
             }
         })
         .collect();
@@ -374,6 +378,7 @@ mod tests {
             tariff_disclaimer: None,
             entity_list_match: None,
             entity_list_notes: None,
+            agent_brief: None,
         }
     }
 

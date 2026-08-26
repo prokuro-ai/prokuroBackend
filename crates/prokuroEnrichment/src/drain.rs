@@ -43,18 +43,23 @@ async fn run_once(
         return Ok(0);
     }
 
-    // Drop keys already in prokuro-parts (e.g. resolved by a prior BOM in the batch).
+    // Skip keys that already have a successful/non-NoMatch snapshot.
+    // NoMatch must be re-looked up (Mouser / keyword may now succeed).
     let pks: Vec<String> = claimed.iter().map(|item| item.pk.clone()).collect();
     let cached = store.get_many(&pks).await.map_err(|e| e.to_string())?;
 
     let mut to_lookup = Vec::new();
     let mut resolved = 0usize;
     for item in claimed {
-        if cached.contains_key(&item.pk) {
-            let _ = store.delete_unresolved(&item.pk).await;
-            resolved += 1;
-        } else {
-            to_lookup.push(item);
+        match cached.get(&item.pk) {
+            Some(part)
+                if part.availability_status
+                    != prokuro_types::enrichment::AvailabilityStatus::NoMatch =>
+            {
+                let _ = store.delete_unresolved(&item.pk).await;
+                resolved += 1;
+            }
+            _ => to_lookup.push(item),
         }
     }
 

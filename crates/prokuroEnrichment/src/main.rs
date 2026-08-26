@@ -2,7 +2,9 @@ use std::{env, net::SocketAddr, sync::Arc};
 
 use prokuro_enrichment::drain;
 use prokuro_enrichment::metrics;
-use prokuro_enrichment::providers::{DigiKeyProvider, RateLimiter};
+use prokuro_enrichment::providers::{
+    DigiKeyProvider, FallbackProvider, MouserEnrichmentProvider, RateLimiter,
+};
 use prokuro_enrichment::store::PartStore;
 use prokuro_enrichment::sync;
 use prokuro_enrichment::types::{Provider, ProviderError};
@@ -14,7 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     metrics::init();
 
     let store = PartStore::from_env().await?;
-    let provider: Arc<dyn Provider> = Arc::new(DigiKeyProvider::from_env()?);
+    let provider = build_provider()?;
     let drain_batch = require_positive_usize("UNRESOLVED_DRAIN_BATCH")?;
     let drain_concurrency = RateLimiter::max_concurrency_from_env()?;
 
@@ -42,6 +44,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
+}
+
+fn build_provider() -> Result<Arc<dyn Provider>, ProviderError> {
+    let digikey = DigiKeyProvider::from_env()?;
+    let mut chain: Vec<Box<dyn Provider>> = vec![Box::new(digikey)];
+    match MouserEnrichmentProvider::from_env() {
+        Ok(mouser) => {
+            tracing::info!("mouser enrichment fallback enabled");
+            chain.push(Box::new(mouser));
+        }
+        Err(ProviderError::NotConfigured(_)) => {
+            tracing::warn!("MOUSER_API_KEY unset; Digi-Key-only enrichment");
+        }
+        Err(error) => return Err(error),
+    }
+    Ok(Arc::new(FallbackProvider::new(chain)))
 }
 
 fn require_positive_usize(name: &str) -> Result<usize, ProviderError> {

@@ -12,6 +12,7 @@ mod store_item;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Query, State};
@@ -19,6 +20,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -29,6 +31,10 @@ use types::{normalize_mpn, PartQuery, PartResult, Provider};
 
 use store::PartStore;
 use worker::process_one;
+
+/// Re-attempt distributor lookup for cached NoMatch after this age (Mouser / keyword may be new).
+/// Short window so post-deploy NoMatches get a second chance quickly without thrashing every poll.
+const NOMATCH_RETRY_AFTER: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Clone)]
 pub struct AppState {
@@ -133,6 +139,15 @@ async fn enrich_lines(
 
     for (pk, indices) in &pk_to_indices {
         if let Some(part) = cached.get(pk) {
+            if part.availability_status == AvailabilityStatus::NoMatch
+                && snapshot_is_stale(&part.fetched_at, NOMATCH_RETRY_AFTER)
+            {
+                // Delete stale NoMatch so drain will actually re-lookup (not short-circuit).
+                if let Err(error) = state.store.delete_snapshot(pk).await {
+                    tracing::warn!(%pk, %error, "failed to delete stale NoMatch snapshot");
+                }
+                continue;
+            }
             metrics::digikey_cache_hit();
             for &idx in indices {
                 results[idx] = Some(part_to_enrich(idx, part, EnrichSource::Cache));
@@ -142,7 +157,7 @@ async fn enrich_lines(
 
     let miss_pks: Vec<String> = pk_to_query
         .keys()
-        .filter(|pk| !cached.contains_key(*pk))
+        .filter(|pk| results[pk_to_indices[*pk][0]].is_none())
         .cloned()
         .collect();
 
@@ -244,4 +259,13 @@ fn part_to_enrich(input_index: usize, part: &PartResult, source: EnrichSource) -
         fetched_at: Some(part.fetched_at.clone()),
         source: Some(source),
     }
+}
+
+fn snapshot_is_stale(fetched_at: &str, max_age: Duration) -> bool {
+    let Ok(parsed) = DateTime::parse_from_rfc3339(fetched_at) else {
+        return true;
+    };
+    let fetched = parsed.with_timezone(&Utc);
+    let age = Utc::now().signed_duration_since(fetched);
+    age.to_std().map(|d| d >= max_age).unwrap_or(true)
 }

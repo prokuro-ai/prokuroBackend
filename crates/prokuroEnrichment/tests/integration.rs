@@ -245,8 +245,8 @@ async fn enrich_nomatch_returns_pending_to_customer() {
     let response = app.oneshot(request).await.unwrap();
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let results: Vec<EnrichResult> = serde_json::from_slice(&body).unwrap();
-    assert_eq!(results[0].match_status, MatchStatus::Pending);
-    assert_eq!(results[0].availability_status, AvailabilityStatus::Pending);
+    assert_eq!(results[0].match_status, MatchStatus::None);
+    assert_eq!(results[0].availability_status, AvailabilityStatus::NoMatch);
 
     let stored = store
         .get_latest(&part_key("NOSUCHPART", Some("Acme")))

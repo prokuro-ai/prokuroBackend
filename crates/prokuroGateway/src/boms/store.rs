@@ -154,6 +154,31 @@ impl BomStore {
         Ok(())
     }
 
+    /// Persist refreshed analyze.json + summary (read-through enrichment / briefs).
+    pub async fn update_analyze_and_summary(
+        &self,
+        account_id: &str,
+        bom_id: &str,
+        analyze: &AnalyzeResult,
+        summary: &BomSummary,
+    ) -> Result<(), StoreError> {
+        let prefix = self.bom_prefix(account_id, bom_id);
+        let mut metadata = self
+            .read_json::<BomMetadata>(&format!("{prefix}/metadata.json"))
+            .await?;
+        metadata.summary = summary.clone();
+        self.write_json(&format!("{prefix}/analyze.json"), analyze)
+            .await?;
+        self.write_json(&format!("{prefix}/metadata.json"), &metadata)
+            .await?;
+
+        let mut index = self.read_index(account_id).await?;
+        if let Some(entry) = index.boms.iter_mut().find(|item| item.id == bom_id) {
+            *entry = summary.clone();
+        }
+        self.write_index(account_id, &index).await
+    }
+
     pub async fn create_bom(&self, input: CreateBomInput) -> Result<BomSummary, StoreError> {
         let bom_id = input.analyze.upload_id.clone();
         let prefix = self.bom_prefix(&input.account_id, &bom_id);
@@ -568,6 +593,7 @@ fn bump_summary_after_edit(summary: &mut BomSummary, analyze: &AnalyzeResult) {
 }
 
 fn apply_line_patch(line: &mut AnalyzedLine, patch: &LinePatch) {
+    let identity_changed = patch.mpn.is_some() || patch.manufacturer.is_some();
     if let Some(mpn) = &patch.mpn {
         line.mpn = Some(mpn.clone());
     }
@@ -582,6 +608,18 @@ fn apply_line_patch(line: &mut AnalyzedLine, patch: &LinePatch) {
     }
     if let Some(description) = &patch.description {
         line.description = Some(description.clone());
+    }
+    if identity_changed {
+        line.availability_status = "Pending".to_string();
+        line.match_status = "Pending".to_string();
+        line.lifecycle_status = "Unknown".to_string();
+        line.total_avail = 0;
+        line.factory_lead_days = None;
+        line.hts_code = None;
+        line.country_of_origin = None;
+        line.category = None;
+        line.agent_brief = None;
+        line.risk_level = RiskLevel::Unknown;
     }
 }
 
@@ -613,6 +651,7 @@ fn new_analyzed_line(row_index: usize, input: &NewLineInput) -> AnalyzedLine {
         tariff_disclaimer: None,
         entity_list_match: None,
         entity_list_notes: None,
+        agent_brief: None,
     }
 }
 
@@ -649,6 +688,7 @@ mod tests {
             tariff_disclaimer: None,
             entity_list_match: None,
             entity_list_notes: None,
+            agent_brief: None,
         }
     }
 

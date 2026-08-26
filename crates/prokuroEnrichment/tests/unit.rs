@@ -1,6 +1,10 @@
 //! Unit tests for enrichment helpers (no DynamoDB / Digi-Key required).
 
-use prokuro_enrichment::types::{normalize_mpn, parse_part_key, part_key};
+use async_trait::async_trait;
+use prokuro_enrichment::providers::FallbackProvider;
+use prokuro_enrichment::types::{
+    normalize_mpn, parse_part_key, part_key, PartQuery, Provider, ProviderError,
+};
 use prokuro_types::enrichment::{AvailabilityStatus, MatchStatus};
 
 #[test]
@@ -32,4 +36,62 @@ fn status_enums_serialize_pascal_case() {
     let match_status = serde_json::to_string(&MatchStatus::Pending).unwrap();
     assert_eq!(avail, "\"InStock\"");
     assert_eq!(match_status, "\"Pending\"");
+}
+
+struct RateLimitedProvider;
+struct MissProvider;
+
+#[async_trait]
+impl Provider for RateLimitedProvider {
+    fn name(&self) -> &str {
+        "rate_limited"
+    }
+    async fn lookup(
+        &self,
+        _query: &PartQuery,
+    ) -> Result<Option<prokuro_enrichment::types::PartResult>, ProviderError> {
+        Err(ProviderError::RateLimited)
+    }
+}
+
+#[async_trait]
+impl Provider for MissProvider {
+    fn name(&self) -> &str {
+        "miss"
+    }
+    async fn lookup(
+        &self,
+        _query: &PartQuery,
+    ) -> Result<Option<prokuro_enrichment::types::PartResult>, ProviderError> {
+        Ok(None)
+    }
+}
+
+#[tokio::test]
+async fn fallback_propagates_rate_limit_instead_of_nomatch() {
+    let provider = FallbackProvider::new(vec![
+        Box::new(RateLimitedProvider),
+        Box::new(MissProvider),
+    ]);
+    let err = provider
+        .lookup(&PartQuery {
+            mpn: "X".into(),
+            manufacturer: None,
+        })
+        .await
+        .expect_err("rate limit must surface");
+    assert!(matches!(err, ProviderError::RateLimited));
+}
+
+#[tokio::test]
+async fn fallback_clean_miss_when_all_providers_miss() {
+    let provider = FallbackProvider::new(vec![Box::new(MissProvider), Box::new(MissProvider)]);
+    let result = provider
+        .lookup(&PartQuery {
+            mpn: "X".into(),
+            manufacturer: None,
+        })
+        .await
+        .expect("ok");
+    assert!(result.is_none());
 }
