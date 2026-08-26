@@ -65,7 +65,7 @@ async fn quote_returns_not_configured_without_creds() {
 }
 
 #[tokio::test]
-async fn order_requires_distributor_credit_when_ordering_disabled() {
+async fn digikey_order_requires_distributor_credit_when_ordering_disabled() {
     let provider = DigiKeyPurchasingProvider::new(
         "id".into(),
         "secret".into(),
@@ -76,6 +76,29 @@ async fn order_requires_distributor_credit_when_ordering_disabled() {
     let response = provider
         .place_order(&PlaceOrderRequest {
             provider: ProviderId::Digikey,
+            lines: vec![PurchaseLine {
+                mpn: "ABC".into(),
+                quantity: 1,
+                manufacturer: None,
+            }],
+            purchase_order_number: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(response.status, PurchaseStatus::RequiresDistributorCredit);
+}
+
+#[tokio::test]
+async fn mouser_order_requires_credit_when_ordering_disabled() {
+    let provider = MouserPurchasingProvider::new(
+        "search-key".into(),
+        "order-key".into(),
+        "https://example.invalid".into(),
+        false,
+    );
+    let response = provider
+        .place_order(&PlaceOrderRequest {
+            provider: ProviderId::Mouser,
             lines: vec![PurchaseLine {
                 mpn: "ABC".into(),
                 quantity: 1,
