@@ -132,6 +132,8 @@ impl BomStore {
     }
 
     /// Persist refreshed analyze.json + summary (read-through enrichment / briefs).
+    /// Overwrites regardless of version — prefer [`Self::update_analyze_and_summary_cas`]
+    /// when concurrent edits may race.
     pub async fn update_analyze_and_summary(
         &self,
         account_id: &str,
@@ -154,6 +156,45 @@ impl BomStore {
             *entry = summary.clone();
         }
         self.write_index(account_id, &index).await
+    }
+
+    /// Persist only when on-disk `version` still equals `expected_version`.
+    /// Returns `Ok(true)` if written, `Ok(false)` if a concurrent edit won (skipped).
+    pub async fn update_analyze_and_summary_cas(
+        &self,
+        account_id: &str,
+        bom_id: &str,
+        expected_version: u64,
+        analyze: &AnalyzeResult,
+        summary: &BomSummary,
+    ) -> Result<bool, StoreError> {
+        let prefix = self.bom_prefix(account_id, bom_id);
+        let mut metadata = self
+            .read_json::<BomMetadata>(&format!("{prefix}/metadata.json"))
+            .await?;
+        if metadata.summary.version != expected_version {
+            return Ok(false);
+        }
+        // Keep identity + optimistic version from disk; refresh risk/count fields only.
+        let mut next_summary = summary.clone();
+        next_summary.version = metadata.summary.version;
+        next_summary.updated_at = metadata.summary.updated_at.clone();
+        next_summary.id = metadata.summary.id.clone();
+        next_summary.name = metadata.summary.name.clone();
+        next_summary.filename = metadata.summary.filename.clone();
+        next_summary.uploaded_at = metadata.summary.uploaded_at.clone();
+        metadata.summary = next_summary;
+        self.write_json(&format!("{prefix}/analyze.json"), analyze)
+            .await?;
+        self.write_json(&format!("{prefix}/metadata.json"), &metadata)
+            .await?;
+
+        let mut index = self.read_index(account_id).await?;
+        if let Some(entry) = index.boms.iter_mut().find(|item| item.id == bom_id) {
+            *entry = metadata.summary.clone();
+        }
+        self.write_index(account_id, &index).await?;
+        Ok(true)
     }
 
     pub async fn create_bom(&self, input: CreateBomInput) -> Result<BomSummary, StoreError> {
@@ -831,6 +872,54 @@ mod tests {
         );
         assert_eq!(fetched.analyze.lines[1].availability_status, "Pending");
         assert_eq!(fetched.analyze.lines[1].match_status, "Pending");
+    }
+
+    #[tokio::test]
+    async fn cas_persist_skips_when_version_advanced() {
+        let (_temp, store) = temp_store();
+        seed_bom(
+            &store,
+            "account-a",
+            "bom-cas",
+            vec![sample_line(0, "A")],
+        )
+        .await;
+
+        let mut record = store.get_bom("account-a", "bom-cas").await.expect("get");
+        assert_eq!(record.summary.version, 1);
+        record.analyze.lines[0].agent_brief = Some("stale brief".into());
+
+        // Concurrent edit bumps version.
+        store
+            .patch_line(
+                "account-a",
+                "bom-cas",
+                0,
+                1,
+                LinePatch {
+                    quantity: Some(9.0),
+                    ..LinePatch::default()
+                },
+            )
+            .await
+            .expect("patch");
+
+        let written = store
+            .update_analyze_and_summary_cas(
+                "account-a",
+                "bom-cas",
+                1,
+                &record.analyze,
+                &record.summary,
+            )
+            .await
+            .expect("cas");
+        assert!(!written, "CAS must skip after concurrent version bump");
+
+        let fetched = store.get_bom("account-a", "bom-cas").await.expect("get");
+        assert_eq!(fetched.summary.version, 2);
+        assert_eq!(fetched.analyze.lines[0].quantity, Some(9.0));
+        assert!(fetched.analyze.lines[0].agent_brief.is_none());
     }
 
     #[tokio::test]

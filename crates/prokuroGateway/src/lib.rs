@@ -491,11 +491,16 @@ async fn purchase_orders_handler(
             Json(response).into_response()
         }
         Err(GatewayError::PurchasingTimeout) => {
-            // Do not release on order timeout: the distributor may have accepted
-            // after we timed out. Releasing would under-bill and allow duplicate retries.
+            // Keep the reservation: distributor may have accepted after we timed out.
+            // Clients must not retry without checking the distributor — quota stays consumed.
             (
                 StatusCode::GATEWAY_TIMEOUT,
-                Json(json!({"error": "purchasing timed out"})),
+                Json(json!({
+                    "error": "purchasing timed out",
+                    "quota_consumed": true,
+                    "retry_safe": false,
+                    "message": "Order timed out after quota was reserved. Do not retry until you confirm with the distributor whether the order was placed; retrying may create a duplicate."
+                })),
             )
                 .into_response()
         }

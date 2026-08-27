@@ -65,6 +65,7 @@ pub async fn get_bom(
 
     match state.bom_store.get_bom(&user.account_id, &bom_id).await {
         Ok(mut record) => {
+            let expected_version = record.summary.version;
             let before = serde_json::to_string(&record.analyze).ok();
             if let Err(error) = refresh_enrichment(&mut record).await {
                 tracing::warn!(%error, bom_id, "read-through enrichment failed; returning stored analyze");
@@ -86,17 +87,28 @@ pub async fn get_bom(
             let after = serde_json::to_string(&record.analyze).ok();
             let analyze_changed = before != after;
             if analyze_changed {
-                if let Err(error) = state
+                match state
                     .bom_store
-                    .update_analyze_and_summary(
+                    .update_analyze_and_summary_cas(
                         &user.account_id,
                         &bom_id,
+                        expected_version,
                         &record.analyze,
                         &record.summary,
                     )
                     .await
                 {
-                    tracing::warn!(%error, bom_id, "failed to persist refreshed BOM analyze");
+                    Ok(false) => {
+                        tracing::info!(
+                            bom_id,
+                            expected_version,
+                            "skipped enrichment persist; BOM changed concurrently"
+                        );
+                    }
+                    Ok(true) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, bom_id, "failed to persist refreshed BOM analyze");
+                    }
                 }
             }
             spawn_bedrock_brief_upgrades(
