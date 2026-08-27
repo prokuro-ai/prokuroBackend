@@ -491,13 +491,8 @@ async fn purchase_orders_handler(
             Json(response).into_response()
         }
         Err(GatewayError::PurchasingTimeout) => {
-            if reserved {
-                if let Some(billing) = &state.billing {
-                    if let Err(error) = billing.release_purchasing_action(&user, true).await {
-                        tracing::error!(%error, "failed to release purchasing reservation after order timeout");
-                    }
-                }
-            }
+            // Do not release on order timeout: the distributor may have accepted
+            // after we timed out. Releasing would under-bill and allow duplicate retries.
             (
                 StatusCode::GATEWAY_TIMEOUT,
                 Json(json!({"error": "purchasing timed out"})),
