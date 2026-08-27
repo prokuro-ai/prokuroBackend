@@ -532,6 +532,33 @@ fn counts_toward_purchasing_usage(status: PurchaseStatus) -> bool {
     )
 }
 
+#[cfg(test)]
+mod purchasing_usage_tests {
+    use super::counts_toward_purchasing_usage;
+    use prokuro_types::purchasing::PurchaseStatus;
+
+    #[test]
+    fn unavailable_and_non_billable_statuses_do_not_count() {
+        assert!(!counts_toward_purchasing_usage(PurchaseStatus::Unavailable));
+        assert!(!counts_toward_purchasing_usage(PurchaseStatus::NotConfigured));
+        assert!(!counts_toward_purchasing_usage(
+            PurchaseStatus::RequiresDistributorCredit
+        ));
+        assert!(!counts_toward_purchasing_usage(
+            PurchaseStatus::RequiresSubscription
+        ));
+        assert!(!counts_toward_purchasing_usage(PurchaseStatus::CapExceeded));
+        assert!(!counts_toward_purchasing_usage(PurchaseStatus::Error));
+    }
+
+    #[test]
+    fn quoted_partial_and_submitted_count() {
+        assert!(counts_toward_purchasing_usage(PurchaseStatus::Quoted));
+        assert!(counts_toward_purchasing_usage(PurchaseStatus::Partial));
+        assert!(counts_toward_purchasing_usage(PurchaseStatus::Submitted));
+    }
+}
+
 fn billing_required_env() -> bool {
     std::env::var("BILLING_REQUIRED")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))

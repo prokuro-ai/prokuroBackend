@@ -886,6 +886,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn patch_manufacturer_with_empty_mpn_stays_no_match() {
+        let (_temp, store) = temp_store();
+        seed_bom(
+            &store,
+            "account-a",
+            "bom-empty-mpn-mfr",
+            vec![sample_line(0, "A")],
+        )
+        .await;
+
+        store
+            .patch_line(
+                "account-a",
+                "bom-empty-mpn-mfr",
+                0,
+                1,
+                LinePatch {
+                    mpn: Some(String::new()),
+                    ..LinePatch::default()
+                },
+            )
+            .await
+            .expect("clear mpn");
+
+        let edited = store
+            .patch_line(
+                "account-a",
+                "bom-empty-mpn-mfr",
+                0,
+                2,
+                LinePatch {
+                    manufacturer: Some("TI".to_string()),
+                    ..LinePatch::default()
+                },
+            )
+            .await
+            .expect("patch manufacturer");
+        assert_eq!(edited.line.manufacturer.as_deref(), Some("TI"));
+        assert_eq!(edited.line.availability_status, "NoMatch");
+        assert_eq!(edited.line.match_status, "NoMatch");
+    }
+
+    #[tokio::test]
     async fn delete_line_shifts_subsequent_indices() {
         let (_temp, store) = temp_store();
         seed_bom(
