@@ -7,7 +7,7 @@ use serde_json::json;
 
 use prokuro_types::pagination::{page_by_id, PageError, PageParams};
 
-use crate::agent_brief::ensure_agent_briefs;
+use crate::agent_brief::{ensure_heuristic_briefs, spawn_bedrock_brief_upgrades};
 use crate::analyze::{apply_enrichment_results, finalize_analyze, AnalyzeResult, AnalyzedLine};
 use crate::auth::require_write;
 use crate::clients::enrichment::{EnrichInput, EnrichmentClient};
@@ -72,7 +72,7 @@ pub async fn get_bom(
                 // refresh_enrichment already finalizes; re-score defensively before briefs.
                 finalize_analyze(&mut record.analyze);
             }
-            ensure_agent_briefs(&mut record.analyze.lines).await;
+            ensure_heuristic_briefs(&mut record.analyze.lines);
             finalize_analyze(&mut record.analyze);
             let (score, at_risk, unknown_count, risk_band) =
                 bom_summary_fields(&record.analyze);
@@ -99,6 +99,11 @@ pub async fn get_bom(
                     tracing::warn!(%error, bom_id, "failed to persist refreshed BOM analyze");
                 }
             }
+            spawn_bedrock_brief_upgrades(
+                state.bom_store.clone(),
+                user.account_id.clone(),
+                bom_id.clone(),
+            );
             Json(record).into_response()
         }
         Err(StoreError::NotFound) => (

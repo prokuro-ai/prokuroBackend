@@ -243,7 +243,10 @@ impl BillingService {
         }
     }
 
-    pub async fn ensure_purchasing_action(
+    /// Reserve one purchasing action (and optionally one order) against plan caps.
+    /// Increments usage immediately with a conditional write so concurrent requests cannot overshoot.
+    /// Call [`Self::release_purchasing_action`] if the provider outcome should not count.
+    pub async fn reserve_purchasing_action(
         &self,
         user: &AuthUser,
         is_order: bool,
@@ -272,44 +275,65 @@ impl BillingService {
             limit: 0,
             purchase_status: Some(PurchaseStatus::Error),
         })?;
-        let limits = &status.limits;
-        let usage = &status.usage;
+        let purchasing_limit = status.limits.purchasing_actions_per_month;
+        let order_limit = status.limits.orders_per_month;
 
-        if usage.purchasing_actions_count >= limits.purchasing_actions_per_month {
-            return Err(CapError {
+        match self
+            .try_reserve_usage_atomic(
+                &user.account_id,
+                purchasing_limit,
+                if is_order { Some(order_limit) } else { None },
+            )
+            .await
+        {
+            Ok(()) => Ok(()),
+            Err(ReserveError::Cap {
+                cap,
+                used,
+                limit,
+            }) => Err(CapError {
                 plan: status.plan,
-                cap: "purchasing_actions_per_month",
-                used: usage.purchasing_actions_count,
-                limit: limits.purchasing_actions_per_month,
+                cap,
+                used,
+                limit,
                 purchase_status: Some(PurchaseStatus::CapExceeded),
-            });
-        }
-        if is_order && usage.orders_count >= limits.orders_per_month {
-            return Err(CapError {
+            }),
+            Err(ReserveError::Write) => Err(CapError {
                 plan: status.plan,
-                cap: "orders_per_month",
-                used: usage.orders_count,
-                limit: limits.orders_per_month,
-                purchase_status: Some(PurchaseStatus::CapExceeded),
-            });
+                cap: "usage_write",
+                used: 0,
+                limit: 0,
+                purchase_status: Some(PurchaseStatus::Error),
+            }),
         }
+    }
 
-        self.increment_usage(
+    /// Refund a previously reserved purchasing action when the provider outcome is not billable.
+    pub async fn release_purchasing_action(
+        &self,
+        user: &AuthUser,
+        is_order: bool,
+    ) -> Result<(), String> {
+        if !self.caps_enforced() && !self.required {
+            return Ok(());
+        }
+        self.adjust_usage(
             &user.account_id,
             0,
             0,
-            1,
-            if is_order { 1 } else { 0 },
+            -1,
+            if is_order { -1 } else { 0 },
         )
         .await
-        .map_err(|_| CapError {
-            plan: status.plan,
-            cap: "usage_write",
-            used: 0,
-            limit: 0,
-            purchase_status: Some(PurchaseStatus::Error),
-        })?;
-        Ok(())
+    }
+
+    /// Backward-compatible alias used by older call sites / tests.
+    pub async fn ensure_purchasing_action(
+        &self,
+        user: &AuthUser,
+        is_order: bool,
+    ) -> Result<(), CapError> {
+        self.reserve_purchasing_action(user, is_order).await
     }
 
     pub async fn ensure_bom_create(
@@ -444,15 +468,33 @@ impl BillingService {
         purchasing: u32,
         orders: u32,
     ) -> Result<(), String> {
+        self.adjust_usage(
+            account_id,
+            analyses as i32,
+            lines as i32,
+            purchasing as i32,
+            orders as i32,
+        )
+        .await
+    }
+
+    async fn adjust_usage(
+        &self,
+        account_id: &str,
+        analyses: i32,
+        lines: i32,
+        purchasing: i32,
+        orders: i32,
+    ) -> Result<(), String> {
         let sk = Self::usage_sk().await;
         match &self.store {
             BillingStore::Memory(state) => {
                 let mut guard = state.write().await;
                 let entry = guard.usage.entry(account_id.to_string()).or_default();
-                entry.analyses_count += analyses;
-                entry.lines_count += lines;
-                entry.purchasing_actions_count += purchasing;
-                entry.orders_count += orders;
+                apply_usage_delta(&mut entry.analyses_count, analyses);
+                apply_usage_delta(&mut entry.lines_count, lines);
+                apply_usage_delta(&mut entry.purchasing_actions_count, purchasing);
+                apply_usage_delta(&mut entry.orders_count, orders);
                 Ok(())
             }
             BillingStore::Dynamo { table, client } => {
@@ -473,6 +515,112 @@ impl BillingService {
                     .await
                     .map_err(|e| e.to_string())?;
                 Ok(())
+            }
+        }
+    }
+
+    /// Atomically reserve purchasing (+ optional order) usage under plan limits.
+    async fn try_reserve_usage_atomic(
+        &self,
+        account_id: &str,
+        purchasing_limit: u32,
+        order_limit: Option<u32>,
+    ) -> Result<(), ReserveError> {
+        let sk = Self::usage_sk().await;
+        match &self.store {
+            BillingStore::Memory(state) => {
+                let mut guard = state.write().await;
+                let entry = guard.usage.entry(account_id.to_string()).or_default();
+                if entry.purchasing_actions_count >= purchasing_limit {
+                    return Err(ReserveError::Cap {
+                        cap: "purchasing_actions_per_month",
+                        used: entry.purchasing_actions_count,
+                        limit: purchasing_limit,
+                    });
+                }
+                if let Some(limit) = order_limit {
+                    if entry.orders_count >= limit {
+                        return Err(ReserveError::Cap {
+                            cap: "orders_per_month",
+                            used: entry.orders_count,
+                            limit,
+                        });
+                    }
+                }
+                entry.purchasing_actions_count =
+                    entry.purchasing_actions_count.saturating_add(1);
+                if order_limit.is_some() {
+                    entry.orders_count = entry.orders_count.saturating_add(1);
+                }
+                Ok(())
+            }
+            BillingStore::Dynamo { table, client } => {
+                let mut condition = String::from(
+                    "(attribute_not_exists(purchasing_actions_count) OR purchasing_actions_count < :plimit)",
+                );
+                let update = if order_limit.is_some() {
+                    condition.push_str(
+                        " AND (attribute_not_exists(orders_count) OR orders_count < :olimit)",
+                    );
+                    "ADD purchasing_actions_count :one, orders_count :one SET account_id = if_not_exists(account_id, :aid)"
+                } else {
+                    "ADD purchasing_actions_count :one SET account_id = if_not_exists(account_id, :aid)"
+                };
+
+                let mut req = client
+                    .update_item()
+                    .table_name(table)
+                    .key("pk", AttributeValue::S(format!("ACCOUNT#{account_id}")))
+                    .key("sk", AttributeValue::S(sk))
+                    .update_expression(update)
+                    .condition_expression(condition)
+                    .expression_attribute_values(
+                        ":plimit",
+                        AttributeValue::N(purchasing_limit.to_string()),
+                    )
+                    .expression_attribute_values(":one", AttributeValue::N("1".into()))
+                    .expression_attribute_values(
+                        ":aid",
+                        AttributeValue::S(account_id.to_string()),
+                    );
+
+                if let Some(limit) = order_limit {
+                    req = req.expression_attribute_values(
+                        ":olimit",
+                        AttributeValue::N(limit.to_string()),
+                    );
+                }
+
+                match req.send().await {
+                    Ok(_) => Ok(()),
+                    Err(err) if is_conditional_check_failed(&err) => {
+                        // Re-read to report which cap tripped when possible.
+                        let usage = self
+                            .get_usage(account_id)
+                            .await
+                            .unwrap_or_else(|_| empty_usage());
+                        if usage.purchasing_actions_count >= purchasing_limit {
+                            Err(ReserveError::Cap {
+                                cap: "purchasing_actions_per_month",
+                                used: usage.purchasing_actions_count,
+                                limit: purchasing_limit,
+                            })
+                        } else if let Some(limit) = order_limit {
+                            Err(ReserveError::Cap {
+                                cap: "orders_per_month",
+                                used: usage.orders_count,
+                                limit,
+                            })
+                        } else {
+                            Err(ReserveError::Cap {
+                                cap: "purchasing_actions_per_month",
+                                used: usage.purchasing_actions_count,
+                                limit: purchasing_limit,
+                            })
+                        }
+                    }
+                    Err(_) => Err(ReserveError::Write),
+                }
             }
         }
     }
@@ -897,6 +1045,32 @@ fn normalize_period_end(value: Option<&str>) -> Option<String> {
         return unix_timestamp_to_rfc3339(ts);
     }
     Some(value.to_string())
+}
+
+fn apply_usage_delta(current: &mut u32, delta: i32) {
+    if delta >= 0 {
+        *current = current.saturating_add(delta as u32);
+    } else {
+        *current = current.saturating_sub((-delta) as u32);
+    }
+}
+
+enum ReserveError {
+    Cap {
+        cap: &'static str,
+        used: u32,
+        limit: u32,
+    },
+    Write,
+}
+
+fn is_conditional_check_failed(
+    err: &aws_sdk_dynamodb::error::SdkError<
+        aws_sdk_dynamodb::operation::update_item::UpdateItemError,
+    >,
+) -> bool {
+    err.as_service_error()
+        .is_some_and(|e| e.is_conditional_check_failed_exception())
 }
 
 #[derive(Debug, Clone)]

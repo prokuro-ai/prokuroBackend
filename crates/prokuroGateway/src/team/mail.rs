@@ -109,7 +109,17 @@ impl InviteMailer {
 }
 
 pub fn accept_url(token: &str) -> String {
-    let base = std::env::var("APP_BASE_URL").unwrap_or_else(|_| "http://localhost:3010".into());
+    let base = std::env::var("APP_BASE_URL").unwrap_or_else(|_| {
+        if std::env::var("AWS_EXECUTION_ENV").is_ok()
+            || std::env::var("ECS_CONTAINER_METADATA_URI").is_ok()
+            || std::env::var("ECS_CONTAINER_METADATA_URI_V4").is_ok()
+        {
+            tracing::error!(
+                "APP_BASE_URL unset in deployed environment; invite links will be invalid"
+            );
+        }
+        "http://localhost:3010".into()
+    });
     format!(
         "{}/invite/accept?token={}",
         base.trim_end_matches('/'),

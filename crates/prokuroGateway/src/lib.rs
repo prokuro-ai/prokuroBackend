@@ -355,8 +355,9 @@ async fn purchase_quote_handler(
         }
     };
 
+    let mut reserved = false;
     if let Some(billing) = &state.billing {
-        if let Err(cap) = billing.ensure_purchasing_action(&user, false).await {
+        if let Err(cap) = billing.reserve_purchasing_action(&user, false).await {
             let message = format!("plan cap exceeded: {}", cap.cap);
             let status = cap
                 .purchase_status
@@ -371,6 +372,7 @@ async fn purchase_quote_handler(
             })
             .into_response();
         }
+        reserved = true;
     } else if billing_required_env() {
         return Json(QuoteResponse {
             provider: request.provider,
@@ -384,17 +386,46 @@ async fn purchase_quote_handler(
     }
 
     match PurchasingClient::from_env().quote(&request).await {
-        Ok(response) => Json(response).into_response(),
-        Err(GatewayError::PurchasingTimeout) => (
-            StatusCode::GATEWAY_TIMEOUT,
-            Json(json!({"error": "purchasing timed out"})),
-        )
-            .into_response(),
-        Err(error) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error": error.to_string()})),
-        )
-            .into_response(),
+        Ok(response) => {
+            if reserved && !counts_toward_purchasing_usage(response.status) {
+                if let Some(billing) = &state.billing {
+                    if let Err(error) = billing.release_purchasing_action(&user, false).await {
+                        tracing::error!(%error, "failed to release purchasing reservation after quote");
+                    }
+                }
+            }
+            Json(response).into_response()
+        }
+        Err(GatewayError::PurchasingTimeout) => {
+            if reserved {
+                if let Some(billing) = &state.billing {
+                    if let Err(error) = billing.release_purchasing_action(&user, false).await {
+                        tracing::error!(%error, "failed to release purchasing reservation after quote timeout");
+                    }
+                }
+            }
+            (
+                StatusCode::GATEWAY_TIMEOUT,
+                Json(json!({"error": "purchasing timed out"})),
+            )
+                .into_response()
+        }
+        Err(error) => {
+            if reserved {
+                if let Some(billing) = &state.billing {
+                    if let Err(release_error) =
+                        billing.release_purchasing_action(&user, false).await
+                    {
+                        tracing::error!(%release_error, "failed to release purchasing reservation after quote error");
+                    }
+                }
+            }
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": error.to_string()})),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -422,8 +453,9 @@ async fn purchase_orders_handler(
         }
     };
 
+    let mut reserved = false;
     if let Some(billing) = &state.billing {
-        if let Err(cap) = billing.ensure_purchasing_action(&user, true).await {
+        if let Err(cap) = billing.reserve_purchasing_action(&user, true).await {
             let message = format!("plan cap exceeded: {}", cap.cap);
             let status = cap
                 .purchase_status
@@ -436,6 +468,7 @@ async fn purchase_orders_handler(
             })
             .into_response();
         }
+        reserved = true;
     } else if billing_required_env() {
         return Json(PlaceOrderResponse {
             provider: request.provider,
@@ -447,18 +480,57 @@ async fn purchase_orders_handler(
     }
 
     match PurchasingClient::from_env().place_order(&request).await {
-        Ok(response) => Json(response).into_response(),
-        Err(GatewayError::PurchasingTimeout) => (
-            StatusCode::GATEWAY_TIMEOUT,
-            Json(json!({"error": "purchasing timed out"})),
-        )
-            .into_response(),
-        Err(error) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error": error.to_string()})),
-        )
-            .into_response(),
+        Ok(response) => {
+            if reserved && !counts_toward_purchasing_usage(response.status) {
+                if let Some(billing) = &state.billing {
+                    if let Err(error) = billing.release_purchasing_action(&user, true).await {
+                        tracing::error!(%error, "failed to release purchasing reservation after order");
+                    }
+                }
+            }
+            Json(response).into_response()
+        }
+        Err(GatewayError::PurchasingTimeout) => {
+            if reserved {
+                if let Some(billing) = &state.billing {
+                    if let Err(error) = billing.release_purchasing_action(&user, true).await {
+                        tracing::error!(%error, "failed to release purchasing reservation after order timeout");
+                    }
+                }
+            }
+            (
+                StatusCode::GATEWAY_TIMEOUT,
+                Json(json!({"error": "purchasing timed out"})),
+            )
+                .into_response()
+        }
+        Err(error) => {
+            if reserved {
+                if let Some(billing) = &state.billing {
+                    if let Err(release_error) =
+                        billing.release_purchasing_action(&user, true).await
+                    {
+                        tracing::error!(%release_error, "failed to release purchasing reservation after order error");
+                    }
+                }
+            }
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": error.to_string()})),
+            )
+                .into_response()
+        }
     }
+}
+
+fn counts_toward_purchasing_usage(status: PurchaseStatus) -> bool {
+    matches!(
+        status,
+        PurchaseStatus::Quoted
+            | PurchaseStatus::Partial
+            | PurchaseStatus::Unavailable
+            | PurchaseStatus::Submitted
+    )
 }
 
 fn billing_required_env() -> bool {

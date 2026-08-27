@@ -624,6 +624,17 @@ fn apply_line_patch(line: &mut AnalyzedLine, patch: &LinePatch) {
 }
 
 fn new_analyzed_line(row_index: usize, input: &NewLineInput) -> AnalyzedLine {
+    let empty_mpn = input
+        .mpn
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty();
+    let (availability_status, match_status) = if empty_mpn {
+        ("NoMatch".to_string(), "NoMatch".to_string())
+    } else {
+        ("Pending".to_string(), "Pending".to_string())
+    };
     AnalyzedLine {
         row_index,
         mpn: input.mpn.clone(),
@@ -632,12 +643,12 @@ fn new_analyzed_line(row_index: usize, input: &NewLineInput) -> AnalyzedLine {
         refdes: input.refdes.clone(),
         description: input.description.clone(),
         aml_candidates: Vec::new(),
-        availability_status: "Pending".to_string(),
+        availability_status,
         lifecycle_status: "Unknown".to_string(),
-        match_status: "Pending".to_string(),
+        match_status,
         factory_lead_days: None,
         total_avail: 0,
-        risk_level: RiskLevel::Yellow,
+        risk_level: RiskLevel::Unknown,
         category: None,
         hts_code: None,
         country_of_origin: None,
