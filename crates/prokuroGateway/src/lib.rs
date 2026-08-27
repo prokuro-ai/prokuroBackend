@@ -491,15 +491,20 @@ async fn purchase_orders_handler(
             Json(response).into_response()
         }
         Err(GatewayError::PurchasingTimeout) => {
-            // Keep the reservation: distributor may have accepted after we timed out.
-            // Clients must not retry without checking the distributor — quota stays consumed.
+            // Keep the reservation when one was taken: distributor may have accepted
+            // after we timed out. Always treat retry as unsafe (duplicate risk).
+            let message = if reserved {
+                "Order timed out after quota was reserved. Do not retry until you confirm with the distributor whether the order was placed; retrying may create a duplicate."
+            } else {
+                "Order timed out. Do not retry until you confirm with the distributor whether the order was placed; retrying may create a duplicate."
+            };
             (
                 StatusCode::GATEWAY_TIMEOUT,
                 Json(json!({
                     "error": "purchasing timed out",
-                    "quota_consumed": true,
+                    "quota_consumed": reserved,
                     "retry_safe": false,
-                    "message": "Order timed out after quota was reserved. Do not retry until you confirm with the distributor whether the order was placed; retrying may create a duplicate."
+                    "message": message,
                 })),
             )
                 .into_response()

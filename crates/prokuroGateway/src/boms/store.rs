@@ -1,8 +1,12 @@
 use std::path::PathBuf;
 
+use aws_sdk_s3::error::SdkError;
+use aws_sdk_s3::operation::put_object::PutObjectError;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client as S3Client;
+use aws_sdk_s3::error::ProvideErrorMetadata;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 
 use crate::analyze::{finalize_analyze, AnalyzeResult, AnalyzedLine, RiskLevel};
 
@@ -24,6 +28,9 @@ pub enum StoreError {
 
 pub struct BomStore {
     mode: StoreMode,
+    /// Serializes BOM mutations in-process so version check + write is atomic
+    /// relative to other gateway tasks on this instance.
+    mutation_lock: Mutex<()>,
 }
 
 enum StoreMode {
@@ -93,6 +100,7 @@ impl BomStore {
             let client = S3Client::new(&config);
             return Self {
                 mode: StoreMode::S3 { client, bucket },
+                mutation_lock: Mutex::new(()),
             };
         }
 
@@ -106,6 +114,7 @@ impl BomStore {
     pub fn local(root: PathBuf) -> Self {
         Self {
             mode: StoreMode::Local { root },
+            mutation_lock: Mutex::new(()),
         }
     }
 
@@ -141,6 +150,7 @@ impl BomStore {
         analyze: &AnalyzeResult,
         summary: &BomSummary,
     ) -> Result<(), StoreError> {
+        let _guard = self.mutation_lock.lock().await;
         let prefix = self.bom_prefix(account_id, bom_id);
         let mut metadata = self
             .read_json::<BomMetadata>(&format!("{prefix}/metadata.json"))
@@ -160,6 +170,10 @@ impl BomStore {
 
     /// Persist only when on-disk `version` still equals `expected_version`.
     /// Returns `Ok(true)` if written, `Ok(false)` if a concurrent edit won (skipped).
+    ///
+    /// In-process: holds the mutation lock across re-read + write so edits cannot
+    /// interleave. On S3: metadata is written with `If-Match` on the read ETag so another
+    /// task that updated metadata causes a skip instead of clobbering/downgrading version.
     pub async fn update_analyze_and_summary_cas(
         &self,
         account_id: &str,
@@ -168,9 +182,11 @@ impl BomStore {
         analyze: &AnalyzeResult,
         summary: &BomSummary,
     ) -> Result<bool, StoreError> {
+        let _guard = self.mutation_lock.lock().await;
         let prefix = self.bom_prefix(account_id, bom_id);
-        let mut metadata = self
-            .read_json::<BomMetadata>(&format!("{prefix}/metadata.json"))
+        let metadata_key = format!("{prefix}/metadata.json");
+        let (mut metadata, etag) = self
+            .read_json_with_etag::<BomMetadata>(&metadata_key)
             .await?;
         if metadata.summary.version != expected_version {
             return Ok(false);
@@ -184,9 +200,16 @@ impl BomStore {
         next_summary.filename = metadata.summary.filename.clone();
         next_summary.uploaded_at = metadata.summary.uploaded_at.clone();
         metadata.summary = next_summary;
-        self.write_json(&format!("{prefix}/analyze.json"), analyze)
+
+        // Claim metadata first (S3 If-Match / in-process lock). Only then write analyze
+        // so a lost race never overwrites a newer edit's analyze.json.
+        let claimed = self
+            .write_json_if_match(&metadata_key, &metadata, etag.as_deref())
             .await?;
-        self.write_json(&format!("{prefix}/metadata.json"), &metadata)
+        if !claimed {
+            return Ok(false);
+        }
+        self.write_json(&format!("{prefix}/analyze.json"), analyze)
             .await?;
 
         let mut index = self.read_index(account_id).await?;
@@ -198,6 +221,7 @@ impl BomStore {
     }
 
     pub async fn create_bom(&self, input: CreateBomInput) -> Result<BomSummary, StoreError> {
+        let _guard = self.mutation_lock.lock().await;
         let bom_id = input.analyze.upload_id.clone();
         let prefix = self.bom_prefix(&input.account_id, &bom_id);
         let uploaded_at = chrono_now();
@@ -245,6 +269,7 @@ impl BomStore {
     }
 
     pub async fn delete_bom(&self, account_id: &str, bom_id: &str) -> Result<(), StoreError> {
+        let _guard = self.mutation_lock.lock().await;
         let mut index = self.read_index(account_id).await?;
         let original_len = index.boms.len();
         index.boms.retain(|item| item.id != bom_id);
@@ -266,6 +291,7 @@ impl BomStore {
         expected_version: u64,
         lines: Vec<AnalyzedLine>,
     ) -> Result<BomRecord, StoreError> {
+        let _guard = self.mutation_lock.lock().await;
         let (mut metadata, mut analyze) = self.load_mutable(account_id, bom_id).await?;
         ensure_version(&metadata.summary, expected_version)?;
 
@@ -288,6 +314,7 @@ impl BomStore {
         expected_version: u64,
         patch: LinePatch,
     ) -> Result<LineEditResult, StoreError> {
+        let _guard = self.mutation_lock.lock().await;
         let (mut metadata, mut analyze) = self.load_mutable(account_id, bom_id).await?;
         ensure_version(&metadata.summary, expected_version)?;
 
@@ -316,6 +343,7 @@ impl BomStore {
         line_index: usize,
         expected_version: u64,
     ) -> Result<DeleteLineResult, StoreError> {
+        let _guard = self.mutation_lock.lock().await;
         let (mut metadata, mut analyze) = self.load_mutable(account_id, bom_id).await?;
         ensure_version(&metadata.summary, expected_version)?;
 
@@ -340,6 +368,7 @@ impl BomStore {
         expected_version: u64,
         input: NewLineInput,
     ) -> Result<LineEditResult, StoreError> {
+        let _guard = self.mutation_lock.lock().await;
         let (mut metadata, mut analyze) = self.load_mutable(account_id, bom_id).await?;
         ensure_version(&metadata.summary, expected_version)?;
 
@@ -498,11 +527,81 @@ impl BomStore {
         serde_json::from_slice(&bytes).map_err(|error| StoreError::Read(error.to_string()))
     }
 
+    async fn read_json_with_etag<T: for<'de> Deserialize<'de>>(
+        &self,
+        key: &str,
+    ) -> Result<(T, Option<String>), StoreError> {
+        match &self.mode {
+            StoreMode::Local { .. } => {
+                let value = self.read_json(key).await?;
+                Ok((value, None))
+            }
+            StoreMode::S3 { client, bucket } => {
+                let response = client
+                    .get_object()
+                    .bucket(bucket)
+                    .key(key)
+                    .send()
+                    .await
+                    .map_err(|_| StoreError::NotFound)?;
+                let etag = response.e_tag().map(str::to_string);
+                let bytes = response
+                    .body
+                    .collect()
+                    .await
+                    .map_err(|error| StoreError::Read(error.to_string()))?
+                    .into_bytes()
+                    .to_vec();
+                let value = serde_json::from_slice(&bytes)
+                    .map_err(|error| StoreError::Read(error.to_string()))?;
+                Ok((value, etag))
+            }
+        }
+    }
+
     async fn write_json<T: Serialize>(&self, key: &str, value: &T) -> Result<(), StoreError> {
         let bytes =
             serde_json::to_vec(value).map_err(|error| StoreError::Write(error.to_string()))?;
         self.write_bytes(key, bytes, Some("application/json".to_string()))
             .await
+    }
+
+    /// Write JSON, optionally conditioned on S3 object ETag (`If-Match`).
+    /// Returns `Ok(false)` when the precondition fails (object changed).
+    /// Local mode always writes (`Ok(true)`); callers must hold `mutation_lock`.
+    async fn write_json_if_match<T: Serialize>(
+        &self,
+        key: &str,
+        value: &T,
+        expected_etag: Option<&str>,
+    ) -> Result<bool, StoreError> {
+        let bytes =
+            serde_json::to_vec(value).map_err(|error| StoreError::Write(error.to_string()))?;
+        match &self.mode {
+            StoreMode::Local { .. } => {
+                self.write_bytes(key, bytes, Some("application/json".to_string()))
+                    .await?;
+                Ok(true)
+            }
+            StoreMode::S3 { client, bucket } => {
+                let Some(etag) = expected_etag else {
+                    // Without an ETag we cannot claim the object atomically across tasks.
+                    return Ok(false);
+                };
+                let request = client
+                    .put_object()
+                    .bucket(bucket)
+                    .key(key)
+                    .body(ByteStream::from(bytes))
+                    .content_type("application/json")
+                    .if_match(etag);
+                match request.send().await {
+                    Ok(_) => Ok(true),
+                    Err(error) if is_precondition_failed(&error) => Ok(false),
+                    Err(error) => Err(StoreError::Write(error.to_string())),
+                }
+            }
+        }
     }
 
     async fn read_bytes(&self, key: &str) -> Result<Vec<u8>, StoreError> {
@@ -580,6 +679,16 @@ impl BomStore {
 
 fn chrono_now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+fn is_precondition_failed(error: &SdkError<PutObjectError>) -> bool {
+    match error {
+        SdkError::ServiceError(context) => {
+            context.raw().status().as_u16() == 412
+                || context.err().code() == Some("PreconditionFailed")
+        }
+        _ => false,
+    }
 }
 
 fn normalize_summary(mut summary: BomSummary) -> BomSummary {
@@ -920,6 +1029,75 @@ mod tests {
         assert_eq!(fetched.summary.version, 2);
         assert_eq!(fetched.analyze.lines[0].quantity, Some(9.0));
         assert!(fetched.analyze.lines[0].agent_brief.is_none());
+    }
+
+    #[tokio::test]
+    async fn cas_and_patch_serialize_under_mutation_lock() {
+        let (_temp, store) = temp_store();
+        seed_bom(
+            &store,
+            "account-a",
+            "bom-cas-race",
+            vec![sample_line(0, "A")],
+        )
+        .await;
+
+        let mut record = store
+            .get_bom("account-a", "bom-cas-race")
+            .await
+            .expect("get");
+        record.analyze.lines[0].agent_brief = Some("enrichment".into());
+        let analyze = record.analyze.clone();
+        let summary = record.summary.clone();
+
+        let store_cas = std::sync::Arc::new(store);
+        let store_patch = store_cas.clone();
+
+        let cas = tokio::spawn({
+            let store = store_cas.clone();
+            async move {
+                store
+                    .update_analyze_and_summary_cas(
+                        "account-a",
+                        "bom-cas-race",
+                        1,
+                        &analyze,
+                        &summary,
+                    )
+                    .await
+            }
+        });
+        let patch = tokio::spawn({
+            let store = store_patch;
+            async move {
+                store
+                    .patch_line(
+                        "account-a",
+                        "bom-cas-race",
+                        0,
+                        1,
+                        LinePatch {
+                            quantity: Some(3.0),
+                            ..LinePatch::default()
+                        },
+                    )
+                    .await
+            }
+        });
+
+        let cas_result = cas.await.expect("join cas").expect("cas ok");
+        let patch_result = patch.await.expect("join patch");
+
+        let fetched = store_cas
+            .get_bom("account-a", "bom-cas-race")
+            .await
+            .expect("get");
+
+        // Patch must always land at version 2; CAS either applied before patch or skipped.
+        assert!(patch_result.is_ok(), "patch should succeed under serialization");
+        assert_eq!(fetched.summary.version, 2);
+        assert_eq!(fetched.analyze.lines[0].quantity, Some(3.0));
+        let _ = cas_result;
     }
 
     #[tokio::test]
