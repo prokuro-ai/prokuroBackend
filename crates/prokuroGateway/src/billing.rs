@@ -218,10 +218,6 @@ impl BillingService {
         Ok(status_from_record(&record, override_plan, usage))
     }
 
-    pub fn required(&self) -> bool {
-        self.required
-    }
-
     /// Enforce plan caps whenever the Dynamo billing table is configured (production).
     fn caps_enforced(&self) -> bool {
         matches!(&self.store, BillingStore::Dynamo { .. })
@@ -325,15 +321,6 @@ impl BillingService {
             if is_order { -1 } else { 0 },
         )
         .await
-    }
-
-    /// Backward-compatible alias used by older call sites / tests.
-    pub async fn ensure_purchasing_action(
-        &self,
-        user: &AuthUser,
-        is_order: bool,
-    ) -> Result<(), CapError> {
-        self.reserve_purchasing_action(user, is_order).await
     }
 
     pub async fn ensure_bom_create(

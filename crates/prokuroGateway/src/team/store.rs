@@ -5,7 +5,6 @@ use chrono::{DateTime, Utc};
 use tokio::sync::RwLock;
 
 use crate::auth::{AuthUser, TeamRole};
-use prokuro_types::purchasing::BillingPlan;
 
 const INVITE_TTL_DAYS: i64 = 7;
 
@@ -57,7 +56,6 @@ struct MemoryState {
     users: HashMap<String, MemberRecord>,
     members: HashMap<String, HashMap<String, MemberRecord>>,
     invites: HashMap<String, InviteRecord>,
-    plans: HashMap<String, BillingPlan>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -80,7 +78,6 @@ impl TeamStore {
                 users: HashMap::new(),
                 members: HashMap::new(),
                 invites: HashMap::new(),
-                plans: HashMap::new(),
             })),
         }
     }
@@ -97,23 +94,6 @@ impl TeamStore {
             };
         }
         Self::memory()
-    }
-
-    pub async fn set_plan_override(&self, account_id: &str, plan: BillingPlan) {
-        if let StoreMode::Memory(state) = &self.mode {
-            state
-                .write()
-                .await
-                .plans
-                .insert(account_id.to_string(), plan);
-        }
-    }
-
-    pub async fn plan_override(&self, account_id: &str) -> Option<BillingPlan> {
-        match &self.mode {
-            StoreMode::Memory(state) => state.read().await.plans.get(account_id).copied(),
-            StoreMode::Dynamo { .. } => None,
-        }
     }
 
     pub async fn resolve_membership(&self, user: &mut AuthUser) -> Result<(), String> {

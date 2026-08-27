@@ -131,29 +131,6 @@ impl BomStore {
         })
     }
 
-    /// Lazily persist a recomputed summary into metadata.json and index.json.
-    pub async fn update_summary(
-        &self,
-        account_id: &str,
-        bom_id: &str,
-        summary: &BomSummary,
-    ) -> Result<(), StoreError> {
-        let prefix = self.bom_prefix(account_id, bom_id);
-        let mut metadata = self
-            .read_json::<BomMetadata>(&format!("{prefix}/metadata.json"))
-            .await?;
-        metadata.summary = summary.clone();
-        self.write_json(&format!("{prefix}/metadata.json"), &metadata)
-            .await?;
-
-        let mut index = self.read_index(account_id).await?;
-        if let Some(entry) = index.boms.iter_mut().find(|item| item.id == bom_id) {
-            *entry = summary.clone();
-        }
-        self.write_index(account_id, &index).await?;
-        Ok(())
-    }
-
     /// Persist refreshed analyze.json + summary (read-through enrichment / briefs).
     pub async fn update_analyze_and_summary(
         &self,
