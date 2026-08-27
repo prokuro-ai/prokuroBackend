@@ -610,8 +610,19 @@ fn apply_line_patch(line: &mut AnalyzedLine, patch: &LinePatch) {
         line.description = Some(description.clone());
     }
     if identity_changed {
-        line.availability_status = "Pending".to_string();
-        line.match_status = "Pending".to_string();
+        let empty_mpn = line
+            .mpn
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty();
+        let (availability_status, match_status) = if empty_mpn {
+            ("NoMatch".to_string(), "NoMatch".to_string())
+        } else {
+            ("Pending".to_string(), "Pending".to_string())
+        };
+        line.availability_status = availability_status;
+        line.match_status = match_status;
         line.lifecycle_status = "Unknown".to_string();
         line.total_avail = 0;
         line.factory_lead_days = None;
@@ -841,6 +852,37 @@ mod tests {
             fetched.analyze.lines[1].manufacturer.as_deref(),
             Some("Murata")
         );
+        assert_eq!(fetched.analyze.lines[1].availability_status, "Pending");
+        assert_eq!(fetched.analyze.lines[1].match_status, "Pending");
+    }
+
+    #[tokio::test]
+    async fn patch_clear_mpn_sets_no_match_not_pending() {
+        let (_temp, store) = temp_store();
+        seed_bom(
+            &store,
+            "account-a",
+            "bom-clear-mpn",
+            vec![sample_line(0, "A")],
+        )
+        .await;
+
+        let edited = store
+            .patch_line(
+                "account-a",
+                "bom-clear-mpn",
+                0,
+                1,
+                LinePatch {
+                    mpn: Some("   ".to_string()),
+                    ..LinePatch::default()
+                },
+            )
+            .await
+            .expect("patch");
+        assert_eq!(edited.line.mpn.as_deref(), Some("   "));
+        assert_eq!(edited.line.availability_status, "NoMatch");
+        assert_eq!(edited.line.match_status, "NoMatch");
     }
 
     #[tokio::test]

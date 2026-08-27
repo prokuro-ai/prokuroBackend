@@ -524,12 +524,11 @@ async fn purchase_orders_handler(
 }
 
 fn counts_toward_purchasing_usage(status: PurchaseStatus) -> bool {
+    // All-miss quotes (`Unavailable`) must not burn purchasing quota — only
+    // billable outcomes where a quote or order actually progressed.
     matches!(
         status,
-        PurchaseStatus::Quoted
-            | PurchaseStatus::Partial
-            | PurchaseStatus::Unavailable
-            | PurchaseStatus::Submitted
+        PurchaseStatus::Quoted | PurchaseStatus::Partial | PurchaseStatus::Submitted
     )
 }
 
