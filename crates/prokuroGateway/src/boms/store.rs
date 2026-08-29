@@ -10,6 +10,8 @@ use tokio::sync::Mutex;
 
 use crate::analyze::{finalize_analyze, AnalyzeResult, AnalyzedLine, RiskLevel};
 
+use super::briefs::{analyze_without_briefs, LineBriefs};
+use super::flagged::{flagged_items_from_record, FlaggedLines};
 use super::types::{bom_summary_fields, default_bom_name, extension_for, BomRecord, BomSummary};
 
 #[derive(Debug, thiserror::Error)]
@@ -118,6 +120,16 @@ impl BomStore {
         }
     }
 
+    /// Account folders that have an `index.json`. Skips reserved prefixes (e.g. CSL).
+    pub async fn list_account_ids(&self) -> Result<Vec<String>, StoreError> {
+        let mut ids = match &self.mode {
+            StoreMode::Local { root } => list_local_account_ids(root).await?,
+            StoreMode::S3 { client, bucket } => list_s3_account_ids(client, bucket).await?,
+        };
+        ids.sort();
+        Ok(ids)
+    }
+
     pub async fn list_boms(&self, account_id: &str) -> Result<Vec<BomSummary>, StoreError> {
         let index = self.read_index(account_id).await?;
         let mut boms: Vec<BomSummary> = index.boms.into_iter().map(normalize_summary).collect();
@@ -137,6 +149,24 @@ impl BomStore {
         Ok(BomRecord {
             summary: normalize_summary(metadata.summary),
             analyze,
+        })
+    }
+
+    /// Flagged (red/yellow) lines across the account's BOMs. Skips BOMs with
+    /// `at_risk_count == 0` so clear BOMs are not loaded.
+    pub async fn flagged_lines(&self, account_id: &str) -> Result<FlaggedLines, StoreError> {
+        let summaries = self.list_boms(account_id).await?;
+        let mut items = Vec::new();
+        for summary in summaries {
+            if summary.at_risk_count == 0 {
+                continue;
+            }
+            let record = self.get_bom(account_id, &summary.id).await?;
+            items.extend(flagged_items_from_record(record));
+        }
+        Ok(FlaggedLines {
+            account_id: account_id.to_string(),
+            items,
         })
     }
 
@@ -249,8 +279,11 @@ impl BomStore {
             input.content_type,
         )
         .await?;
-        self.write_json(&format!("{prefix}/analyze.json"), &input.analyze)
-            .await?;
+        self.write_json(
+            &format!("{prefix}/analyze.json"),
+            &analyze_without_briefs(&input.analyze),
+        )
+        .await?;
         self.write_json(
             &format!("{prefix}/metadata.json"),
             &BomMetadata {
@@ -409,6 +442,57 @@ impl BomStore {
         Ok((metadata, analyze))
     }
 
+    /// Persist cache-refreshed analyze + summary without bumping `version`.
+    pub async fn persist_refreshed(
+        &self,
+        account_id: &str,
+        bom_id: &str,
+        analyze: &AnalyzeResult,
+        summary: &BomSummary,
+    ) -> Result<(), StoreError> {
+        let prefix = self.bom_prefix(account_id, bom_id);
+        let mut metadata = self
+            .read_json::<BomMetadata>(&format!("{prefix}/metadata.json"))
+            .await?;
+        metadata.summary = summary.clone();
+        self.write_json(
+            &format!("{prefix}/analyze.json"),
+            &analyze_without_briefs(analyze),
+        )
+        .await?;
+        self.write_json(&format!("{prefix}/metadata.json"), &metadata)
+            .await?;
+
+        let mut index = self.read_index(account_id).await?;
+        if let Some(existing) = index.boms.iter_mut().find(|item| item.id == bom_id) {
+            *existing = summary.clone();
+        }
+        self.write_index(account_id, &index).await
+    }
+
+    pub async fn get_line_briefs(
+        &self,
+        account_id: &str,
+        bom_id: &str,
+    ) -> Result<LineBriefs, StoreError> {
+        let key = format!("{}/line-briefs.json", self.bom_prefix(account_id, bom_id));
+        match self.read_json::<LineBriefs>(&key).await {
+            Ok(briefs) => Ok(briefs),
+            Err(StoreError::NotFound) => Ok(LineBriefs::default()),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub async fn put_line_briefs(
+        &self,
+        account_id: &str,
+        bom_id: &str,
+        briefs: &LineBriefs,
+    ) -> Result<(), StoreError> {
+        let key = format!("{}/line-briefs.json", self.bom_prefix(account_id, bom_id));
+        self.write_json(&key, briefs).await
+    }
+
     async fn persist_bom(
         &self,
         account_id: &str,
@@ -416,8 +500,11 @@ impl BomStore {
         analyze: &AnalyzeResult,
     ) -> Result<(), StoreError> {
         let prefix = self.bom_prefix(account_id, &metadata.summary.id);
-        self.write_json(&format!("{prefix}/analyze.json"), analyze)
-            .await?;
+        self.write_json(
+            &format!("{prefix}/analyze.json"),
+            &analyze_without_briefs(analyze),
+        )
+        .await?;
         self.write_json(&format!("{prefix}/metadata.json"), metadata)
             .await?;
 
@@ -691,6 +778,73 @@ fn is_precondition_failed(error: &SdkError<PutObjectError>) -> bool {
     }
 }
 
+fn is_reserved_account_prefix(id: &str) -> bool {
+    matches!(id, "screening")
+}
+
+async fn list_local_account_ids(root: &std::path::Path) -> Result<Vec<String>, StoreError> {
+    let mut ids = Vec::new();
+    let mut entries = match tokio::fs::read_dir(root).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(ids),
+        Err(error) => return Err(StoreError::Read(error.to_string())),
+    };
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|error| StoreError::Read(error.to_string()))?
+    {
+        let file_type = entry
+            .file_type()
+            .await
+            .map_err(|error| StoreError::Read(error.to_string()))?;
+        if !file_type.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if is_reserved_account_prefix(&name) {
+            continue;
+        }
+        if tokio::fs::try_exists(entry.path().join("index.json"))
+            .await
+            .unwrap_or(false)
+        {
+            ids.push(name);
+        }
+    }
+    Ok(ids)
+}
+
+async fn list_s3_account_ids(client: &S3Client, bucket: &str) -> Result<Vec<String>, StoreError> {
+    let mut ids = Vec::new();
+    let mut continuation_token = None;
+    loop {
+        let mut request = client.list_objects_v2().bucket(bucket).delimiter("/");
+        if let Some(token) = continuation_token.as_deref() {
+            request = request.continuation_token(token);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|error| StoreError::Read(error.to_string()))?;
+        for prefix in response.common_prefixes() {
+            let Some(raw) = prefix.prefix() else {
+                continue;
+            };
+            let id = raw.trim_end_matches('/');
+            if id.is_empty() || is_reserved_account_prefix(id) {
+                continue;
+            }
+            ids.push(id.to_string());
+        }
+        continuation_token = response.next_continuation_token().map(str::to_string);
+        if continuation_token.is_none() {
+            break;
+        }
+    }
+    Ok(ids)
+}
+
 fn normalize_summary(mut summary: BomSummary) -> BomSummary {
     if summary.version == 0 {
         summary.version = 1;
@@ -889,6 +1043,137 @@ mod tests {
             })
             .await
             .expect("create");
+    }
+
+    #[tokio::test]
+    async fn flagged_lines_reads_existing_boms_without_new_store() {
+        let (_temp, store) = temp_store();
+
+        let mut clear = sample_line(0, "CLEAR");
+        clear.availability_status = "InStock".to_string();
+        clear.lifecycle_status = "Active".to_string();
+        clear.total_avail = 5000;
+
+        let mut yellow = sample_line(1, "OOS");
+        yellow.availability_status = "OutOfStock".to_string();
+
+        let mut red = sample_line(2, "EOL");
+        red.lifecycle_status = "eol".to_string();
+
+        seed_bom(&store, "account-a", "bom-clear", vec![clear.clone()]).await;
+        seed_bom(&store, "account-a", "bom-risk", vec![clear, yellow, red]).await;
+        seed_bom(&store, "account-b", "bom-other", vec![sample_line(0, "OTHER")]).await;
+
+        let flagged = store.flagged_lines("account-a").await.expect("flagged");
+        assert_eq!(flagged.account_id, "account-a");
+        let mpns: Vec<_> = flagged
+            .items
+            .iter()
+            .map(|item| item.line.mpn.as_deref())
+            .collect();
+        assert_eq!(mpns, vec![Some("OOS"), Some("EOL")]);
+        assert!(flagged
+            .items
+            .iter()
+            .all(|item| item.bom_id == "bom-risk" && item.bom_name == "Test"));
+        assert!(store
+            .flagged_lines("account-c")
+            .await
+            .expect("empty")
+            .items
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_account_ids_skips_reserved_and_finds_indexes() {
+        let (_temp, store) = temp_store();
+        seed_bom(&store, "account-a", "bom-1", vec![sample_line(0, "A")]).await;
+        seed_bom(&store, "account-b", "bom-2", vec![sample_line(0, "B")]).await;
+        tokio::fs::create_dir_all(_temp.path().join("screening/csl"))
+            .await
+            .expect("screening dir");
+
+        let ids = store.list_account_ids().await.expect("list accounts");
+        assert_eq!(ids, vec!["account-a".to_string(), "account-b".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn persist_refreshed_updates_risk_without_bumping_version() {
+        let (_temp, store) = temp_store();
+        let mut green = sample_line(0, "MPN-1");
+        green.availability_status = "InStock".to_string();
+        green.lifecycle_status = "Active".to_string();
+        green.total_avail = 5000;
+        seed_bom(&store, "account-a", "bom-risk", vec![green]).await;
+
+        let mut record = store
+            .get_bom("account-a", "bom-risk")
+            .await
+            .expect("get");
+        assert_eq!(record.summary.version, 1);
+        assert_eq!(record.summary.at_risk_count, 0);
+
+        record.analyze.lines[0].lifecycle_status = "eol".to_string();
+        crate::analyze::finalize_analyze(&mut record.analyze);
+        crate::boms::daily_refresh::apply_summary_from_analyze(&mut record);
+        store
+            .persist_refreshed(
+                "account-a",
+                "bom-risk",
+                &record.analyze,
+                &record.summary,
+            )
+            .await
+            .expect("persist");
+
+        let listed = store.list_boms("account-a").await.expect("list");
+        let fetched = store.get_bom("account-a", "bom-risk").await.expect("get");
+        assert_eq!(fetched.summary.version, 1);
+        assert_eq!(fetched.summary.at_risk_count, 1);
+        assert_eq!(listed[0].at_risk_count, 1);
+        assert_eq!(fetched.analyze.lines[0].risk_level, RiskLevel::Red);
+    }
+
+    #[tokio::test]
+    async fn line_briefs_roundtrip_and_missing_is_empty() {
+        let (_temp, store) = temp_store();
+        seed_bom(&store, "account-a", "bom-1", vec![sample_line(0, "A")]).await;
+
+        let missing = store
+            .get_line_briefs("account-a", "bom-1")
+            .await
+            .expect("missing");
+        assert!(missing.lines.is_empty());
+
+        let mut briefs = crate::boms::briefs::LineBriefs::default();
+        briefs.lines.insert(
+            "0".into(),
+            crate::boms::briefs::LineBrief {
+                fingerprint: "fp".into(),
+                text: "stock is gone".into(),
+                updated_at: "2026-01-01T00:00:00Z".into(),
+            },
+        );
+        store
+            .put_line_briefs("account-a", "bom-1", &briefs)
+            .await
+            .expect("put");
+        let loaded = store
+            .get_line_briefs("account-a", "bom-1")
+            .await
+            .expect("get");
+        assert_eq!(loaded, briefs);
+
+        store
+            .put_line_briefs("account-a", "bom-1", &crate::boms::briefs::LineBriefs::default())
+            .await
+            .expect("clear");
+        assert!(store
+            .get_line_briefs("account-a", "bom-1")
+            .await
+            .expect("cleared")
+            .lines
+            .is_empty());
     }
 
     #[tokio::test]

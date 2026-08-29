@@ -7,15 +7,17 @@ use serde_json::json;
 
 use prokuro_types::pagination::{page_by_id, PageError, PageParams};
 
-use crate::agent_brief::{ensure_heuristic_briefs, spawn_bedrock_brief_upgrades};
-use crate::analyze::{apply_enrichment_results, finalize_analyze, AnalyzeResult, AnalyzedLine};
+use crate::analyze::{AnalyzeResult, AnalyzedLine};
+use crate::boms::analysis::{kick_changed_line_briefs, persist_overlay_if_changed};
+use crate::boms::briefs::{attach_line_briefs, needs_brief_refresh};
+use crate::boms::daily_refresh::refresh_record_from_cache;
 use crate::auth::require_write;
 use crate::clients::enrichment::{EnrichInput, EnrichmentClient};
 use crate::state::AppState;
 
 use super::observability::BOM_WRITE_FAILED_MARKER;
 use super::store::{CreateBomInput, LinePatch, NewLineInput, StoreError};
-use super::types::{bom_summary_fields, BomSummary};
+use super::types::BomSummary;
 
 #[derive(Debug, Deserialize)]
 pub struct ListBomsQuery {
@@ -65,57 +67,50 @@ pub async fn get_bom(
 
     match state.bom_store.get_bom(&user.account_id, &bom_id).await {
         Ok(mut record) => {
-            let expected_version = record.summary.version;
-            let before = serde_json::to_string(&record.analyze).ok();
-            if let Err(error) = refresh_enrichment(&mut record).await {
+            let stored_lines = record.analyze.lines.clone();
+            let mut overlay_changed = false;
+            if let Err(error) =
+                refresh_record_from_cache(&mut record, &EnrichmentClient::from_env()).await
+            {
                 tracing::warn!(%error, bom_id, "read-through enrichment failed; returning stored analyze");
             } else {
-                // refresh_enrichment already finalizes; re-score defensively before briefs.
-                finalize_analyze(&mut record.analyze);
-            }
-            ensure_heuristic_briefs(&mut record.analyze.lines);
-            finalize_analyze(&mut record.analyze);
-            let (score, at_risk, unknown_count, risk_band) =
-                bom_summary_fields(&record.analyze);
-            let lines = record.analyze.summary.total;
-            record.summary.at_risk_count = at_risk;
-            record.summary.overall_risk_score = score;
-            record.summary.line_count = lines;
-            record.summary.unknown_count = unknown_count;
-            record.summary.risk_band = risk_band;
-
-            let after = serde_json::to_string(&record.analyze).ok();
-            let analyze_changed = before != after;
-            if analyze_changed {
-                match state
-                    .bom_store
-                    .update_analyze_and_summary_cas(
-                        &user.account_id,
-                        &bom_id,
-                        expected_version,
-                        &record.analyze,
-                        &record.summary,
-                    )
-                    .await
+                match persist_overlay_if_changed(
+                    &state.bom_store,
+                    &user.account_id,
+                    &bom_id,
+                    &stored_lines,
+                    &mut record,
+                )
+                .await
                 {
-                    Ok(false) => {
-                        tracing::info!(
-                            bom_id,
-                            expected_version,
-                            "skipped enrichment persist; BOM changed concurrently"
-                        );
-                    }
-                    Ok(true) => {}
+                    Ok(changed) => overlay_changed = changed,
                     Err(error) => {
                         tracing::warn!(%error, bom_id, "failed to persist refreshed BOM analyze");
                     }
                 }
             }
-            spawn_bedrock_brief_upgrades(
-                state.bom_store.clone(),
-                user.account_id.clone(),
-                bom_id.clone(),
-            );
+
+            let briefs = match state
+                .bom_store
+                .get_line_briefs(&user.account_id, &bom_id)
+                .await
+            {
+                Ok(briefs) => briefs,
+                Err(error) => {
+                    tracing::warn!(%error, bom_id, "failed to load line briefs");
+                    crate::boms::briefs::LineBriefs::default()
+                }
+            };
+            if overlay_changed || needs_brief_refresh(&record.analyze.lines, &briefs) {
+                kick_changed_line_briefs(
+                    &state,
+                    user.account_id.clone(),
+                    bom_id.clone(),
+                    record.analyze.lines.clone(),
+                );
+            }
+            attach_line_briefs(&mut record.analyze.lines, &briefs);
+            attach_line_briefs(&mut record.analyze.top_risks, &briefs);
             Json(record).into_response()
         }
         Err(StoreError::NotFound) => (
@@ -125,28 +120,6 @@ pub async fn get_bom(
             .into_response(),
         Err(error) => store_error_response(error).into_response(),
     }
-}
-
-async fn refresh_enrichment(record: &mut super::types::BomRecord) -> Result<(), String> {
-    if record.analyze.lines.is_empty() {
-        return Ok(());
-    }
-    let enrich_inputs: Vec<EnrichInput> = record
-        .analyze
-        .lines
-        .iter()
-        .map(|line| EnrichInput {
-            mpn: line.mpn.clone().unwrap_or_default(),
-            manufacturer: line.manufacturer.clone(),
-        })
-        .collect();
-    let enrich = EnrichmentClient::from_env()
-        .enrich_cache_only(&enrich_inputs)
-        .await
-        .map_err(|e| e.to_string())?;
-    apply_enrichment_results(&mut record.analyze.lines, &enrich);
-    finalize_analyze(&mut record.analyze);
-    Ok(())
 }
 
 pub async fn create_bom(
@@ -181,6 +154,9 @@ pub async fn create_bom(
         }
     }
 
+    let account_id = user.account_id.clone();
+    let bom_id = upload.analyze.upload_id.clone();
+    let lines = upload.analyze.lines.clone();
     let input = CreateBomInput {
         account_id: user.account_id,
         email: user.email,
@@ -192,7 +168,10 @@ pub async fn create_bom(
     };
 
     match state.bom_store.create_bom(input).await {
-        Ok(summary) => (StatusCode::CREATED, Json(summary)).into_response(),
+        Ok(summary) => {
+            kick_changed_line_briefs(&state, account_id, bom_id, lines);
+            (StatusCode::CREATED, Json(summary)).into_response()
+        }
         Err(error) => store_error_response(error).into_response(),
     }
 }
@@ -383,7 +362,15 @@ pub async fn put_bom(
         .replace_lines(&user.account_id, &bom_id, body.version, body.lines)
         .await
     {
-        Ok(record) => Json(record).into_response(),
+        Ok(record) => {
+            kick_changed_line_briefs(
+                &state,
+                user.account_id.clone(),
+                bom_id,
+                record.analyze.lines.clone(),
+            );
+            Json(record).into_response()
+        }
         Err(error) => {
             mutation_error_response(&user.account_id, &bom_id, "put_bom", error).into_response()
         }
@@ -419,6 +406,7 @@ pub async fn patch_line(
     {
         Ok(result) => {
             enqueue_line_enrichment(&result.line).await;
+            kick_stored_bom(&state, &user.account_id, &bom_id).await;
             Json(LineMutationResponse {
                 version: result.version,
                 line_index: result.line_index,
@@ -451,11 +439,14 @@ pub async fn delete_line(
         .delete_line(&user.account_id, &bom_id, line_index, query.version)
         .await
     {
-        Ok(result) => Json(DeleteLineResponse {
-            version: result.version,
-            line_count: result.line_count,
-        })
-        .into_response(),
+        Ok(result) => {
+            kick_stored_bom(&state, &user.account_id, &bom_id).await;
+            Json(DeleteLineResponse {
+                version: result.version,
+                line_count: result.line_count,
+            })
+            .into_response()
+        }
         Err(error) => {
             mutation_error_response(&user.account_id, &bom_id, "delete_line", error).into_response()
         }
@@ -491,6 +482,7 @@ pub async fn add_line(
     {
         Ok(result) => {
             enqueue_line_enrichment(&result.line).await;
+            kick_stored_bom(&state, &user.account_id, &bom_id).await;
             (
                 StatusCode::CREATED,
                 Json(LineMutationResponse {
@@ -526,6 +518,24 @@ async fn enqueue_line_enrichment(line: &AnalyzedLine) {
         .await
     {
         tracing::warn!(%error, "failed to enqueue enrichment after line edit");
+    }
+}
+
+async fn kick_stored_bom(state: &AppState, account_id: &str, bom_id: &str) {
+    match state.bom_store.get_bom(account_id, bom_id).await {
+        Ok(record) => kick_changed_line_briefs(
+            state,
+            account_id.to_string(),
+            bom_id.to_string(),
+            record.analyze.lines,
+        ),
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                bom_id,
+                "skip line briefs after write; could not reload BOM"
+            );
+        }
     }
 }
 
@@ -795,6 +805,7 @@ mod tests {
             bom_store: Arc::new(store),
             billing: None,
             team: Arc::new(crate::team::TeamStore::memory()),
+            bedrock: None,
         };
         let app = crate::app(state);
 
@@ -825,6 +836,7 @@ mod tests {
             bom_store: Arc::new(BomStore::local(temp.path().to_path_buf())),
             billing: None,
             team: Arc::new(crate::team::TeamStore::memory()),
+            bedrock: None,
         };
         let app = crate::app(state);
 
@@ -837,5 +849,102 @@ mod tests {
 
         let response = app.oneshot(request).await.expect("response");
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn get_bom_attaches_line_brief_without_writing_it_to_analyze() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BomStore::local(temp.path().to_path_buf());
+
+        let mut analyze = AnalyzeResult {
+            upload_id: "bom-brief".to_string(),
+            source_filename: "test.csv".to_string(),
+            sheet_name: None,
+            mapping_confidence: 0.9,
+            summary: AnalyzeSummary {
+                total: 1,
+                in_stock: 0,
+                out_of_stock: 1,
+                eol_or_nrnd: 0,
+                no_match: 0,
+                error_count: 0,
+                long_lead: 0,
+                red_count: 0,
+                yellow_count: 1,
+                green_count: 0,
+                unknown_count: 0,
+            },
+            lines: vec![{
+                let mut line = sample_line(0, "OOS-1");
+                line.availability_status = "OutOfStock".into();
+                line.total_avail = 0;
+                line.risk_level = RiskLevel::Yellow;
+                line
+            }],
+            top_risks: Vec::new(),
+            warnings: Vec::new(),
+            stats: serde_json::json!({}),
+            analyzed_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        finalize_analyze(&mut analyze);
+        store
+            .create_bom(CreateBomInput {
+                account_id: "account-a".to_string(),
+                email: None,
+                name: None,
+                filename: "test.csv".to_string(),
+                file_bytes: b"mpn,qty\nOOS-1,1".to_vec(),
+                content_type: Some("text/csv".to_string()),
+                analyze,
+            })
+            .await
+            .expect("seed");
+
+        let mut briefs = crate::boms::briefs::LineBriefs::default();
+        briefs.lines.insert(
+            "0".into(),
+            crate::boms::briefs::LineBrief {
+                fingerprint: crate::boms::briefs::line_fingerprint(
+                    &store
+                        .get_bom("account-a", "bom-brief")
+                        .await
+                        .expect("get")
+                        .analyze
+                        .lines[0],
+                ),
+                text: "Distributor stock is zero.".into(),
+                updated_at: "2026-01-01T00:00:00Z".into(),
+            },
+        );
+        store
+            .put_line_briefs("account-a", "bom-brief", &briefs)
+            .await
+            .expect("briefs");
+
+        let state = AppState {
+            auth: None,
+            bom_store: Arc::new(store),
+            billing: None,
+            team: Arc::new(crate::team::TeamStore::memory()),
+            bedrock: None,
+        };
+        let app = crate::app(state);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/v1/boms/bom-brief")
+            .header("authorization", "Bearer test:account-a")
+            .body(Body::empty())
+            .expect("request");
+        let response = app.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(
+            json["analyze"]["lines"][0]["agent_brief"],
+            "Distributor stock is zero."
+        );
     }
 }

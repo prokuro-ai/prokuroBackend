@@ -1,3 +1,4 @@
+pub mod bedrock;
 pub mod enrichment;
 pub mod parser;
 pub mod purchasing;

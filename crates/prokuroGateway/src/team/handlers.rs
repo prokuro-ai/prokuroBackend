@@ -368,6 +368,7 @@ mod tests {
             bom_store: Arc::new(BomStore::local(temp.path().to_path_buf())),
             billing: Some(crate::billing::BillingService::memory()),
             team,
+            bedrock: None,
         };
         (state, temp)
     }

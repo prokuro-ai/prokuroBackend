@@ -31,7 +31,6 @@ use team::{
 };
 
 pub mod analyze;
-pub mod agent_brief;
 pub mod auth;
 pub mod billing;
 pub mod boms;
@@ -58,6 +57,8 @@ pub enum GatewayError {
     PurchasingError(String),
     #[error("purchasing timed out")]
     PurchasingTimeout,
+    #[error("bedrock error: {0}")]
+    BedrockError(String),
 }
 
 pub fn app(state: AppState) -> Router {

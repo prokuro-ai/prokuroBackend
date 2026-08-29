@@ -85,7 +85,7 @@ pub struct AnalyzedLine {
     pub entity_list_match: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity_list_notes: Option<String>,
-    /// Bedrock / heuristic analyst brief for at-risk lines.
+    /// Response-only LLM brief. Never persist on `analyze.json`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_brief: Option<String>,
 }
@@ -408,6 +408,7 @@ mod tests {
         assert!(value.get("tariff_disclaimer").is_none());
         assert!(value.get("entity_list_match").is_none());
         assert!(value.get("entity_list_notes").is_none());
+        assert!(value.get("agent_brief").is_none());
         assert_eq!(value["mpn"], json!("MPN-0"));
         assert_eq!(value["risk_level"], json!("green"));
     }

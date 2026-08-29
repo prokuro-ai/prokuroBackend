@@ -9,6 +9,7 @@ async fn main() -> Result<(), std::io::Error> {
     tracing_subscriber::fmt::init();
 
     let state = prokuro_gateway::build_app_state().await;
+    prokuro_gateway::boms::daily_refresh::spawn(state.bom_store.clone());
     let app = prokuro_gateway::app((*state).clone());
 
     let port = env::var("PORT")
