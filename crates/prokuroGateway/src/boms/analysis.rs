@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
 use crate::analyze::AnalyzedLine;
@@ -69,7 +69,23 @@ pub async fn apply_line_briefs(
 
     for line in to_analyze {
         let (system, user) = line_brief_prompt(line)?;
-        let text = bedrock.converse(&system, &user).await?;
+        let text = match bedrock.converse(&system, &user).await {
+            Ok(text) => text,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    account_id,
+                    bom_id,
+                    row_index = line.row_index,
+                    "bedrock line brief failed; keeping prior briefs"
+                );
+                let key = line_key(line.row_index);
+                if let Some(prev) = existing.lines.get(&key) {
+                    next.lines.insert(key, prev.clone());
+                }
+                continue;
+            }
+        };
         if text.trim().is_empty() {
             tracing::warn!(
                 account_id,
@@ -95,32 +111,50 @@ pub async fn apply_line_briefs(
     Ok(next)
 }
 
-static LINE_BRIEF_IN_FLIGHT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-
-fn line_brief_in_flight() -> &'static Mutex<HashSet<String>> {
-    LINE_BRIEF_IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
+struct LineBriefJobs {
+    running: HashSet<String>,
+    pending: HashMap<String, Vec<AnalyzedLine>>,
 }
 
-fn try_begin_line_brief_job(account_id: &str, bom_id: &str) -> Option<String> {
+fn line_brief_jobs() -> &'static Mutex<LineBriefJobs> {
+    static JOBS: OnceLock<Mutex<LineBriefJobs>> = OnceLock::new();
+    JOBS.get_or_init(|| {
+        Mutex::new(LineBriefJobs {
+            running: HashSet::new(),
+            pending: HashMap::new(),
+        })
+    })
+}
+
+fn try_begin_line_brief_job(
+    account_id: &str,
+    bom_id: &str,
+    lines: Vec<AnalyzedLine>,
+) -> Option<(String, Vec<AnalyzedLine>)> {
     let key = format!("{account_id}/{bom_id}");
-    let mut running = line_brief_in_flight()
+    let mut jobs = line_brief_jobs()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if running.contains(&key) {
+    if jobs.running.contains(&key) {
+        jobs.pending.insert(key, lines);
         return None;
     }
-    running.insert(key.clone());
-    Some(key)
+    jobs.running.insert(key.clone());
+    Some((key, lines))
 }
 
-fn finish_line_brief_job(key: &str) {
-    line_brief_in_flight()
+fn finish_line_brief_job(key: &str) -> Option<Vec<AnalyzedLine>> {
+    let mut jobs = line_brief_jobs()
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .remove(key);
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(lines) = jobs.pending.remove(key) {
+        return Some(lines);
+    }
+    jobs.running.remove(key);
+    None
 }
 
-/// Spawn per-BOM line briefs when Bedrock is configured. No-op otherwise.
+/// Spawn line briefs when Bedrock is configured. Queues if a job is already running.
 pub fn kick_changed_line_briefs(
     state: &AppState,
     account_id: impl Into<String>,
@@ -133,14 +167,19 @@ pub fn kick_changed_line_briefs(
     let store = state.bom_store.clone();
     let account_id = account_id.into();
     let bom_id = bom_id.into();
-    let Some(job_key) = try_begin_line_brief_job(&account_id, &bom_id) else {
+    let Some((job_key, mut lines)) = try_begin_line_brief_job(&account_id, &bom_id, lines) else {
         return;
     };
     tokio::spawn(async move {
-        let result = apply_line_briefs(&store, &bedrock, &account_id, &bom_id, &lines).await;
-        finish_line_brief_job(&job_key);
-        if let Err(error) = result {
-            tracing::warn!(%error, account_id, bom_id, "flagged line brief failed");
+        loop {
+            let result = apply_line_briefs(&store, &bedrock, &account_id, &bom_id, &lines).await;
+            if let Err(error) = result {
+                tracing::warn!(%error, account_id, bom_id, "flagged line brief failed");
+            }
+            match finish_line_brief_job(&job_key) {
+                Some(next) => lines = next,
+                None => break,
+            }
         }
     });
 }
@@ -242,6 +281,28 @@ mod tests {
             "bom-1",
             vec![sample_line(0, "OOS-1", RiskLevel::Yellow)],
         );
+    }
+
+    #[test]
+    fn kick_while_running_queues_latest_lines() {
+        let key = "account-a/bom-q";
+        {
+            let mut jobs = line_brief_jobs()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            jobs.running.clear();
+            jobs.pending.clear();
+            jobs.running.insert(key.to_string());
+        }
+        assert!(try_begin_line_brief_job(
+            "account-a",
+            "bom-q",
+            vec![sample_line(0, "A", RiskLevel::Yellow)],
+        )
+        .is_none());
+        let queued = finish_line_brief_job(key).expect("pending");
+        assert_eq!(queued[0].mpn.as_deref(), Some("A"));
+        assert!(finish_line_brief_job(key).is_none());
     }
 
     #[tokio::test]

@@ -31,6 +31,8 @@ pub struct MemberRecord {
     pub user_id: String,
     pub account_id: String,
     pub email: Option<String>,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
     pub role: TeamRole,
     pub created_at: String,
 }
@@ -97,11 +99,31 @@ impl TeamStore {
     }
 
     pub async fn resolve_membership(&self, user: &mut AuthUser) -> Result<(), String> {
-        if let Some(member) = self.get_user_membership(&user.user_id).await? {
-            user.account_id = member.account_id;
+        if let Some(mut member) = self.get_user_membership(&user.user_id).await? {
+            user.account_id = member.account_id.clone();
             user.role = member.role;
             if user.email.is_none() {
-                user.email = member.email;
+                user.email = member.email.clone();
+            }
+            let mut dirty = false;
+            if user.email.is_some() && user.email != member.email {
+                member.email = user.email.clone();
+                dirty = true;
+            }
+            if let Some(first_name) = &user.first_name {
+                if member.first_name.as_ref() != Some(first_name) {
+                    member.first_name = Some(first_name.clone());
+                    dirty = true;
+                }
+            }
+            if let Some(last_name) = &user.last_name {
+                if member.last_name.as_ref() != Some(last_name) {
+                    member.last_name = Some(last_name.clone());
+                    dirty = true;
+                }
+            }
+            if dirty {
+                self.put_member(&member).await?;
             }
             return Ok(());
         }
@@ -111,6 +133,8 @@ impl TeamStore {
             user_id: user.user_id.clone(),
             account_id: user.user_id.clone(),
             email: user.email.clone(),
+            first_name: user.first_name.clone(),
+            last_name: user.last_name.clone(),
             role: TeamRole::Owner,
             created_at: now,
         };
@@ -319,6 +343,8 @@ impl TeamStore {
             user_id: user.user_id.clone(),
             account_id: invite.account_id.clone(),
             email: Some(invite.email.clone()),
+            first_name: user.first_name.clone(),
+            last_name: user.last_name.clone(),
             role: invite.role,
             created_at: Utc::now().to_rfc3339(),
         };
@@ -652,6 +678,8 @@ fn member_from_item(item: HashMap<String, AttributeValue>) -> Option<MemberRecor
         user_id: get_s(&item, "user_id")?,
         account_id: get_s(&item, "account_id")?,
         email: get_s(&item, "email"),
+        first_name: get_s(&item, "first_name"),
+        last_name: get_s(&item, "last_name"),
         role: TeamRole::parse(get_s(&item, "role")?.as_str())?,
         created_at: get_s(&item, "created_at").unwrap_or_default(),
     })
@@ -702,6 +730,12 @@ fn member_item(member: &MemberRecord, account_row: bool) -> HashMap<String, Attr
     );
     if let Some(email) = &member.email {
         item.insert("email".into(), AttributeValue::S(email.clone()));
+    }
+    if let Some(first_name) = &member.first_name {
+        item.insert("first_name".into(), AttributeValue::S(first_name.clone()));
+    }
+    if let Some(last_name) = &member.last_name {
+        item.insert("last_name".into(), AttributeValue::S(last_name.clone()));
     }
     item
 }

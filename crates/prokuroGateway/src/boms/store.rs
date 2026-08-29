@@ -443,31 +443,23 @@ impl BomStore {
     }
 
     /// Persist cache-refreshed analyze + summary without bumping `version`.
+    /// Skips (`Ok(false)`) when a concurrent edit advanced the version.
     pub async fn persist_refreshed(
         &self,
         account_id: &str,
         bom_id: &str,
+        expected_version: u64,
         analyze: &AnalyzeResult,
         summary: &BomSummary,
-    ) -> Result<(), StoreError> {
-        let prefix = self.bom_prefix(account_id, bom_id);
-        let mut metadata = self
-            .read_json::<BomMetadata>(&format!("{prefix}/metadata.json"))
-            .await?;
-        metadata.summary = summary.clone();
-        self.write_json(
-            &format!("{prefix}/analyze.json"),
+    ) -> Result<bool, StoreError> {
+        self.update_analyze_and_summary_cas(
+            account_id,
+            bom_id,
+            expected_version,
             &analyze_without_briefs(analyze),
+            summary,
         )
-        .await?;
-        self.write_json(&format!("{prefix}/metadata.json"), &metadata)
-            .await?;
-
-        let mut index = self.read_index(account_id).await?;
-        if let Some(existing) = index.boms.iter_mut().find(|item| item.id == bom_id) {
-            *existing = summary.clone();
-        }
-        self.write_index(account_id, &index).await
+        .await
     }
 
     pub async fn get_line_briefs(
@@ -1116,15 +1108,17 @@ mod tests {
         record.analyze.lines[0].lifecycle_status = "eol".to_string();
         crate::analyze::finalize_analyze(&mut record.analyze);
         crate::boms::daily_refresh::apply_summary_from_analyze(&mut record);
-        store
+        let wrote = store
             .persist_refreshed(
                 "account-a",
                 "bom-risk",
+                record.summary.version,
                 &record.analyze,
                 &record.summary,
             )
             .await
             .expect("persist");
+        assert!(wrote);
 
         let listed = store.list_boms("account-a").await.expect("list");
         let fetched = store.get_bom("account-a", "bom-risk").await.expect("get");
@@ -1132,6 +1126,59 @@ mod tests {
         assert_eq!(fetched.summary.at_risk_count, 1);
         assert_eq!(listed[0].at_risk_count, 1);
         assert_eq!(fetched.analyze.lines[0].risk_level, RiskLevel::Red);
+    }
+
+    #[tokio::test]
+    async fn persist_refreshed_skips_when_version_advanced() {
+        let (_temp, store) = temp_store();
+        seed_bom(
+            &store,
+            "account-a",
+            "bom-stale",
+            vec![sample_line(0, "A")],
+        )
+        .await;
+
+        let mut record = store
+            .get_bom("account-a", "bom-stale")
+            .await
+            .expect("get");
+        let expected = record.summary.version;
+
+        store
+            .patch_line(
+                "account-a",
+                "bom-stale",
+                0,
+                expected,
+                LinePatch {
+                    quantity: Some(99.0),
+                    ..LinePatch::default()
+                },
+            )
+            .await
+            .expect("patch");
+
+        record.analyze.lines[0].total_avail = 7;
+        crate::analyze::finalize_analyze(&mut record.analyze);
+        crate::boms::daily_refresh::apply_summary_from_analyze(&mut record);
+
+        let wrote = store
+            .persist_refreshed(
+                "account-a",
+                "bom-stale",
+                expected,
+                &record.analyze,
+                &record.summary,
+            )
+            .await
+            .expect("persist");
+        assert!(!wrote);
+
+        let fetched = store.get_bom("account-a", "bom-stale").await.expect("get");
+        assert_eq!(fetched.summary.version, expected + 1);
+        assert_eq!(fetched.analyze.lines[0].quantity, Some(99.0));
+        assert_ne!(fetched.analyze.lines[0].total_avail, 7);
     }
 
     #[tokio::test]

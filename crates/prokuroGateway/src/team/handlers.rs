@@ -232,7 +232,10 @@ pub async fn accept_invite(
     match state.team.accept_invite(token, &user).await {
         Ok(member) => Json(json!({
             "account_id": member.account_id,
-            "role": member.role,
+            "role": member.role.as_str(),
+            "first_name": member.first_name,
+            "last_name": member.last_name,
+            "email": member.email,
         }))
         .into_response(),
         Err(error) => team_error(error).into_response(),
@@ -251,6 +254,8 @@ fn member_json(member: &MemberRecord) -> serde_json::Value {
     json!({
         "user_id": member.user_id,
         "email": member.email,
+        "first_name": member.first_name,
+        "last_name": member.last_name,
         "role": member.role.as_str(),
         "created_at": member.created_at,
     })
@@ -667,5 +672,71 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::GONE);
         assert_eq!(body["error"], "invite expired");
+    }
+
+    #[tokio::test]
+    async fn accept_invite_stores_member_names() {
+        let (state, _temp) = test_state();
+        with_plan(&state, "owner-names", BillingPlan::Growth).await;
+        let app = crate::app(state);
+
+        let _ = json_request(
+            app.clone(),
+            "GET",
+            "/v1/team/members",
+            "Bearer test:owner-names:owner@example.com|Owner|Person",
+            None,
+        )
+        .await;
+
+        let (status, invite) = json_request(
+            app.clone(),
+            "POST",
+            "/v1/team/invites",
+            "Bearer test:owner-names:owner@example.com|Owner|Person",
+            Some(r#"{"email":"ada@example.com","role":"read_only"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{invite}");
+        let token = invite["id"].as_str().unwrap();
+
+        let accept_body = format!(r#"{{"token":"{token}"}}"#);
+        let (status, accepted) = json_request(
+            app.clone(),
+            "POST",
+            "/v1/team/invites/accept",
+            "Bearer test:ada-1:ada@example.com|Ada|Lovelace",
+            Some(&accept_body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{accepted}");
+        assert_eq!(accepted["first_name"], "Ada");
+        assert_eq!(accepted["last_name"], "Lovelace");
+
+        let (status, team) = json_request(
+            app,
+            "GET",
+            "/v1/team/members",
+            "Bearer test:owner-names:owner@example.com|Owner|Person",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{team}");
+        let ada = team["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["email"] == "ada@example.com")
+            .expect("ada member");
+        assert_eq!(ada["first_name"], "Ada");
+        assert_eq!(ada["last_name"], "Lovelace");
+        let owner = team["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["email"] == "owner@example.com")
+            .expect("owner member");
+        assert_eq!(owner["first_name"], "Owner");
+        assert_eq!(owner["last_name"], "Person");
     }
 }

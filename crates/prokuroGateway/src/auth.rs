@@ -53,6 +53,8 @@ pub struct AuthUser {
     pub user_id: String,
     pub account_id: String,
     pub email: Option<String>,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
     pub role: TeamRole,
 }
 
@@ -106,6 +108,8 @@ struct Jwk {
 struct CognitoClaims {
     sub: String,
     email: Option<String>,
+    given_name: Option<String>,
+    family_name: Option<String>,
     #[serde(rename = "token_use")]
     token_use: String,
 }
@@ -132,7 +136,12 @@ impl AuthService {
     pub async fn authenticate(&self, headers: &HeaderMap) -> Result<AuthUser, AuthError> {
         let token = bearer_token(headers)?;
         let claims = self.verify_token(token).await?;
-        Ok(identity_user(claims.sub, claims.email))
+        Ok(identity_user(
+            claims.sub,
+            claims.email,
+            clean_name(claims.given_name),
+            clean_name(claims.family_name),
+        ))
     }
 
     async fn verify_token(&self, token: &str) -> Result<CognitoClaims, AuthError> {
@@ -241,16 +250,29 @@ fn forbidden(message: &str) -> Response {
         .into_response()
 }
 
-fn identity_user(user_id: String, email: Option<String>) -> AuthUser {
+fn clean_name(raw: Option<String>) -> Option<String> {
+    raw.map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value != "-")
+}
+
+fn identity_user(
+    user_id: String,
+    email: Option<String>,
+    first_name: Option<String>,
+    last_name: Option<String>,
+) -> AuthUser {
     AuthUser {
         account_id: user_id.clone(),
         user_id,
         email,
+        first_name,
+        last_name,
         role: TeamRole::Owner,
     }
 }
 
 /// Unit-test auth bypass: `Authorization: Bearer test:<user_id>` or `test:<user_id>:<email>`.
+/// Optional `|First|Last` name suffix: `test:<user_id>:<email>|Ada|Lovelace`.
 /// Only compiled into the library test build — not present in release binaries.
 #[cfg(test)]
 fn test_identity(headers: &HeaderMap) -> Option<AuthUser> {
@@ -261,14 +283,25 @@ fn local_bypass_identity(headers: &HeaderMap) -> Option<AuthUser> {
     let token = bearer_token(headers)
         .ok()
         .and_then(|token| token.strip_prefix("test:"))?;
-    let (user_id, email) = match token.split_once(':') {
+    let (identity, names) = match token.split_once('|') {
+        Some((identity, names)) => (identity, Some(names)),
+        None => (token, None),
+    };
+    let (first_name, last_name) = match names {
+        Some(names) => {
+            let (first, last) = names.split_once('|').unwrap_or((names, ""));
+            (clean_name(Some(first.into())), clean_name(Some(last.into())))
+        }
+        None => (None, None),
+    };
+    let (user_id, email) = match identity.split_once(':') {
         Some((user_id, email)) if !user_id.is_empty() && !email.is_empty() => {
             (user_id.to_string(), Some(email.to_string()))
         }
-        _ if !token.is_empty() => (token.to_string(), None),
+        _ if !identity.is_empty() => (identity.to_string(), None),
         _ => return None,
     };
-    Some(identity_user(user_id, email))
+    Some(identity_user(user_id, email, first_name, last_name))
 }
 
 fn bearer_token(headers: &HeaderMap) -> Result<&str, AuthError> {

@@ -178,7 +178,8 @@ mod tests {
             },
         );
 
-        let (next, to_analyze) = reconcile_line_briefs(&[flagged], &existing);
+        let lines = [flagged];
+        let (next, to_analyze) = reconcile_line_briefs(&lines, &existing);
         assert!(to_analyze.is_empty());
         assert_eq!(next, existing);
         assert!(!needs_brief_refresh(&[line(1, "OOS-1", RiskLevel::Yellow)], &existing));
@@ -196,7 +197,8 @@ mod tests {
             },
         );
         let green = line(0, "OK-1", RiskLevel::Green);
-        let (next, to_analyze) = reconcile_line_briefs(&[green], &existing);
+        let lines = [green];
+        let (next, to_analyze) = reconcile_line_briefs(&lines, &existing);
         assert!(to_analyze.is_empty());
         assert!(next.lines.is_empty());
     }

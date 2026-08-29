@@ -40,13 +40,23 @@ pub async fn run_once(store: &BomStore) -> Result<(usize, usize), String> {
     let account_count = accounts.len();
     let mut bom_count = 0usize;
     for account_id in accounts {
-        let boms = store
-            .list_boms(&account_id)
-            .await
-            .map_err(|error| error.to_string())?;
+        let boms = match store.list_boms(&account_id).await {
+            Ok(boms) => boms,
+            Err(error) => {
+                tracing::warn!(%error, account_id, "daily refresh: skip account");
+                continue;
+            }
+        };
         for summary in boms {
-            refresh_one(store, &client, &account_id, &summary.id).await?;
-            bom_count += 1;
+            match refresh_one(store, &client, &account_id, &summary.id).await {
+                Ok(true) => bom_count += 1,
+                Ok(false) => {
+                    tracing::info!(account_id, bom_id = %summary.id, "daily refresh: skipped concurrent edit");
+                }
+                Err(error) => {
+                    tracing::warn!(%error, account_id, bom_id = %summary.id, "daily refresh: skip bom");
+                }
+            }
         }
     }
     Ok((account_count, bom_count))
@@ -57,15 +67,22 @@ async fn refresh_one(
     client: &EnrichmentClient,
     account_id: &str,
     bom_id: &str,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let mut record = store
         .get_bom(account_id, bom_id)
         .await
         .map_err(|error| error.to_string())?;
+    let expected_version = record.summary.version;
     refresh_record_from_cache(&mut record, client).await?;
     apply_summary_from_analyze(&mut record);
     store
-        .persist_refreshed(account_id, bom_id, &record.analyze, &record.summary)
+        .persist_refreshed(
+            account_id,
+            bom_id,
+            expected_version,
+            &record.analyze,
+            &record.summary,
+        )
         .await
         .map_err(|error| error.to_string())
 }

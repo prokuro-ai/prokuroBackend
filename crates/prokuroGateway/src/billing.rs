@@ -690,8 +690,24 @@ impl BillingService {
                 user.account_id.clone(),
             ),
             (
+                "metadata[plan]".to_string(),
+                match req.plan {
+                    BillingPlan::Growth => "growth".to_string(),
+                    BillingPlan::Scale => "scale".to_string(),
+                    BillingPlan::Free => "free".to_string(),
+                },
+            ),
+            (
                 "subscription_data[metadata][account_id]".to_string(),
                 user.account_id.clone(),
+            ),
+            (
+                "subscription_data[metadata][plan]".to_string(),
+                match req.plan {
+                    BillingPlan::Growth => "growth".to_string(),
+                    BillingPlan::Scale => "scale".to_string(),
+                    BillingPlan::Free => "free".to_string(),
+                },
             ),
         ];
 
@@ -821,16 +837,27 @@ impl BillingService {
             record.current_period_end = unix_timestamp_to_rfc3339(period_end);
         }
 
-        // Infer plan from price id when present.
+        // Infer plan from price id when present (subscription payloads).
         if let Some(price) = obj
             .pointer("/items/data/0/price/id")
             .or_else(|| obj.pointer("/display_items/0/price/id"))
+            .or_else(|| obj.pointer("/line_items/data/0/price/id"))
             .and_then(|v| v.as_str())
         {
             if price == self.price_scale {
                 record.plan = BillingPlan::Scale;
             } else if price == self.price_growth {
                 record.plan = BillingPlan::Growth;
+            }
+        } else if let Some(plan_meta) = obj
+            .pointer("/metadata/plan")
+            .and_then(|v| v.as_str())
+        {
+            // checkout.session.completed often has no expanded line items — use metadata.
+            match plan_meta {
+                "scale" => record.plan = BillingPlan::Scale,
+                "growth" => record.plan = BillingPlan::Growth,
+                _ => {}
             }
         }
 

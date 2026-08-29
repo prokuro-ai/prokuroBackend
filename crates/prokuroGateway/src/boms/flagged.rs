@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn empty_account_returns_no_items() {
-        let result = collect_flagged_lines("account-a", &[], |_| {
+        let result = collect_flagged_lines("account-a", &[], |_id| -> Result<BomRecord, ()> {
             panic!("must not load a BOM when the account has none")
         })
         .expect("collect");
@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn mixed_risk_keeps_only_red_and_yellow() {
         let summaries = [summary("bom-mix", "Mixed Board", 2, 3)];
-        let result = collect_flagged_lines("account-a", &summaries, |id| {
+        let result = collect_flagged_lines("account-a", &summaries, |id| -> Result<BomRecord, ()> {
             assert_eq!(id, "bom-mix");
             Ok(record(
                 "bom-mix",
@@ -196,7 +196,7 @@ mod tests {
             summary("bom-clear", "Clear Board", 0, 1),
             summary("bom-watch", "Watch Board", 1, 1),
         ];
-        let result = collect_flagged_lines("account-a", &summaries, |id| {
+        let result = collect_flagged_lines("account-a", &summaries, |id| -> Result<BomRecord, ()> {
             assert_ne!(id, "bom-clear", "must not load a BOM with at_risk_count 0");
             assert_eq!(id, "bom-watch");
             Ok(record(
