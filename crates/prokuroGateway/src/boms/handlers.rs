@@ -184,6 +184,7 @@ struct BomUpload {
     name: Option<String>,
 }
 
+#[allow(clippy::result_large_err)]
 async fn read_bom_upload(mut multipart: Multipart) -> Result<BomUpload, axum::response::Response> {
     let mut filename = String::from("upload.csv");
     let mut file_bytes: Option<Vec<u8>> = None;

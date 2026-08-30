@@ -58,14 +58,11 @@ pub fn needs_brief_refresh(lines: &[AnalyzedLine], briefs: &LineBriefs) -> bool 
         if !is_flagged_line(line) {
             return false;
         }
-        match briefs.lines.get(&line_key(line.row_index)) {
+        !matches!(
+            briefs.lines.get(&line_key(line.row_index)),
             Some(brief)
-                if brief.fingerprint == line_fingerprint(line) && !brief.text.is_empty() =>
-            {
-                false
-            }
-            _ => true,
-        }
+                if brief.fingerprint == line_fingerprint(line) && !brief.text.is_empty()
+        )
     })
 }
 

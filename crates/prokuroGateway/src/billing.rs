@@ -37,6 +37,8 @@ type HmacSha256 = Hmac<Sha256>;
 struct PlanOverride {
     plan: BillingPlan,
     expires_at: Option<String>,
+    /// Persisted admin annotation; kept for Dynamo round-trip / future status surfaces.
+    #[allow(dead_code)]
     note: Option<String>,
 }
 
@@ -1361,6 +1363,7 @@ pub struct AdminSetPlanBody {
     pub note: Option<String>,
 }
 
+#[allow(clippy::result_large_err)]
 fn verify_admin_secret(headers: &HeaderMap) -> Result<(), Response> {
     let expected = std::env::var("PROKURO_ADMIN_SECRET")
         .ok()
@@ -1385,6 +1388,7 @@ fn verify_admin_secret(headers: &HeaderMap) -> Result<(), Response> {
     Ok(())
 }
 
+#[allow(clippy::result_large_err)]
 fn parse_admin_plan(plan: &str) -> Result<BillingPlan, Response> {
     match plan.to_ascii_lowercase().as_str() {
         "growth" => Ok(BillingPlan::Growth),
