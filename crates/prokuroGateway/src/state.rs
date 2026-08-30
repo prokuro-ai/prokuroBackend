@@ -9,6 +9,7 @@ use crate::auth::{authenticate, AuthService, AuthUser};
 use crate::billing::BillingService;
 use crate::boms::store::BomStore;
 use crate::clients::bedrock::BedrockClient;
+use crate::crm::CrmService;
 use crate::team::TeamStore;
 use prokuro_types::purchasing::BillingPlan;
 
@@ -19,6 +20,7 @@ pub struct AppState {
     pub billing: Option<Arc<BillingService>>,
     pub team: Arc<TeamStore>,
     pub bedrock: Option<Arc<BedrockClient>>,
+    pub crm: Option<Arc<CrmService>>,
 }
 
 impl AppState {
@@ -29,6 +31,7 @@ impl AppState {
             billing: BillingService::from_env().await,
             team: Arc::new(TeamStore::from_env().await),
             bedrock: BedrockClient::from_env().await.map(Arc::new),
+            crm: CrmService::from_env(),
         }
     }
 
