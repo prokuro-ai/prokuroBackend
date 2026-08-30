@@ -184,7 +184,7 @@ impl MouserPurchasingProvider {
         let available = part.availability_in_stock;
         let error = if unit_price.is_none() {
             Some("no price breaks for requested quantity".into())
-        } else if !available.is_some_and(|qty| qty >= i64::from(line.quantity)) {
+        } else if available.is_none_or(|qty| qty < i64::from(line.quantity)) {
             Some("not available in stock for requested quantity".into())
         } else {
             None

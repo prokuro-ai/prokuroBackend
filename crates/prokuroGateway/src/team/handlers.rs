@@ -374,6 +374,7 @@ mod tests {
             billing: Some(crate::billing::BillingService::memory()),
             team,
             bedrock: None,
+            crm: None,
         };
         (state, temp)
     }

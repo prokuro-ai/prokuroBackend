@@ -807,6 +807,7 @@ mod tests {
             billing: None,
             team: Arc::new(crate::team::TeamStore::memory()),
             bedrock: None,
+            crm: None,
         };
         let app = crate::app(state);
 
@@ -838,6 +839,7 @@ mod tests {
             billing: None,
             team: Arc::new(crate::team::TeamStore::memory()),
             bedrock: None,
+            crm: None,
         };
         let app = crate::app(state);
 
@@ -928,6 +930,7 @@ mod tests {
             billing: None,
             team: Arc::new(crate::team::TeamStore::memory()),
             bedrock: None,
+            crm: None,
         };
         let app = crate::app(state);
 

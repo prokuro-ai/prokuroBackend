@@ -274,6 +274,7 @@ mod tests {
             billing: None,
             team: Arc::new(TeamStore::memory()),
             bedrock: None,
+            crm: None,
         };
         kick_changed_line_briefs(
             &state,

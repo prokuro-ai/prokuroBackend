@@ -21,6 +21,7 @@ use boms::handlers::{
     add_line, create_bom, delete_bom, delete_line, get_bom, list_boms, patch_line, put_bom,
 };
 use clients::enrichment::{EnrichInput, EnrichmentClient};
+use crm::{crm_accounts, crm_status, crm_sync_bom};
 use clients::parser::ParserClient;
 use clients::purchasing::{PlaceOrderRequest, PurchasingClient, QuoteRequest};
 use clients::tariff::{TariffClient, TariffInput};
@@ -35,6 +36,7 @@ pub mod auth;
 pub mod billing;
 pub mod boms;
 pub mod clients;
+pub mod crm;
 pub mod entitlements;
 pub mod state;
 pub mod team;
@@ -96,6 +98,9 @@ pub fn app(state: AppState) -> Router {
             get(get_bom).put(put_bom).delete(delete_bom),
         )
         .route("/v1/boms/{id}/lines", post(add_line))
+        .route("/v1/crm/status", get(crm_status))
+        .route("/v1/crm/accounts", get(crm_accounts))
+        .route("/v1/crm/boms/{id}/sync", post(crm_sync_bom))
         .route(
             "/v1/boms/{id}/lines/{line_index}",
             patch(patch_line).delete(delete_line),
