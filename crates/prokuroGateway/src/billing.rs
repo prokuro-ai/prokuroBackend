@@ -674,50 +674,21 @@ impl BillingService {
         }
 
         let customer_id = record.stripe_customer_id.clone().unwrap();
-        let form = vec![
-            ("mode".to_string(), "subscription".to_string()),
-            ("success_url".to_string(), req.success_url.clone()),
-            ("cancel_url".to_string(), req.cancel_url.clone()),
-            ("customer".to_string(), customer_id),
-            ("line_items[0][price]".to_string(), price_id.to_string()),
-            ("line_items[0][quantity]".to_string(), "1".to_string()),
-            (
-                "client_reference_id".to_string(),
-                user.account_id.clone(),
-            ),
-            (
-                "metadata[account_id]".to_string(),
-                user.account_id.clone(),
-            ),
-            (
-                "metadata[plan]".to_string(),
-                match req.plan {
-                    BillingPlan::Growth => "growth".to_string(),
-                    BillingPlan::Scale => "scale".to_string(),
-                    BillingPlan::Free => "free".to_string(),
-                },
-            ),
-            (
-                "subscription_data[metadata][account_id]".to_string(),
-                user.account_id.clone(),
-            ),
-            (
-                "subscription_data[metadata][plan]".to_string(),
-                match req.plan {
-                    BillingPlan::Growth => "growth".to_string(),
-                    BillingPlan::Scale => "scale".to_string(),
-                    BillingPlan::Free => "free".to_string(),
-                },
-            ),
-        ];
+        let form = embedded_checkout_form(
+            &customer_id,
+            price_id,
+            &user.account_id,
+            req.plan,
+            &req.return_url,
+        );
 
         let response: serde_json::Value = self.stripe_form("checkout/sessions", &form).await?;
-        let url = response
-            .get("url")
+        let client_secret = response
+            .get("client_secret")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| "Stripe checkout session missing url".to_string())?
+            .ok_or_else(|| "Stripe checkout session missing client_secret".to_string())?
             .to_string();
-        Ok(CheckoutResponse { url })
+        Ok(CheckoutResponse { client_secret })
     }
 
     pub async fn create_portal(
@@ -1283,6 +1254,41 @@ struct StripeEventData {
     object: serde_json::Value,
 }
 
+fn plan_meta(plan: BillingPlan) -> &'static str {
+    match plan {
+        BillingPlan::Growth => "growth",
+        BillingPlan::Scale => "scale",
+        BillingPlan::Free => "free",
+    }
+}
+
+/// Stripe Checkout Session fields for in-app Embedded Checkout (not hosted redirect).
+fn embedded_checkout_form(
+    customer_id: &str,
+    price_id: &str,
+    account_id: &str,
+    plan: BillingPlan,
+    return_url: &str,
+) -> Vec<(String, String)> {
+    let plan = plan_meta(plan).to_string();
+    vec![
+        ("mode".to_string(), "subscription".to_string()),
+        ("ui_mode".to_string(), "embedded".to_string()),
+        ("return_url".to_string(), return_url.to_string()),
+        ("customer".to_string(), customer_id.to_string()),
+        ("line_items[0][price]".to_string(), price_id.to_string()),
+        ("line_items[0][quantity]".to_string(), "1".to_string()),
+        ("client_reference_id".to_string(), account_id.to_string()),
+        ("metadata[account_id]".to_string(), account_id.to_string()),
+        ("metadata[plan]".to_string(), plan.clone()),
+        (
+            "subscription_data[metadata][account_id]".to_string(),
+            account_id.to_string(),
+        ),
+        ("subscription_data[metadata][plan]".to_string(), plan),
+    ]
+}
+
 fn verify_stripe_signature(
     headers: &HeaderMap,
     body: &[u8],
@@ -1677,5 +1683,28 @@ mod tests {
         let status = status_from_record(&record, None, empty_usage());
         assert_eq!(status.plan, BillingPlan::Free);
         assert_eq!(status.plan_source, PlanSource::Free);
+    }
+
+    #[test]
+    fn embedded_checkout_form_uses_ui_mode_not_hosted_urls() {
+        let form = embedded_checkout_form(
+            "cus_123",
+            "price_growth",
+            "account-a",
+            BillingPlan::Growth,
+            "https://app.example/billing?billing=success&session_id={CHECKOUT_SESSION_ID}",
+        );
+        let map: std::collections::HashMap<_, _> = form.into_iter().collect();
+        assert_eq!(map.get("ui_mode").map(String::as_str), Some("embedded"));
+        assert_eq!(map.get("mode").map(String::as_str), Some("subscription"));
+        assert!(map.contains_key("return_url"));
+        assert!(!map.contains_key("success_url"));
+        assert!(!map.contains_key("cancel_url"));
+        assert_eq!(map.get("metadata[plan]").map(String::as_str), Some("growth"));
+        assert_eq!(
+            map.get("subscription_data[metadata][account_id]")
+                .map(String::as_str),
+            Some("account-a")
+        );
     }
 }
