@@ -177,13 +177,14 @@ pub struct BillingAccountStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckoutRequest {
     pub plan: BillingPlan,
-    pub success_url: String,
-    pub cancel_url: String,
+    /// Stripe Embedded Checkout return URL. May include `{CHECKOUT_SESSION_ID}`.
+    pub return_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckoutResponse {
-    pub url: String,
+    /// Stripe Embedded Checkout client secret (mount in-app; do not redirect).
+    pub client_secret: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
