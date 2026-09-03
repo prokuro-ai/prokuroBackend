@@ -192,7 +192,15 @@ fn parser_error_response(error: GatewayError) -> (StatusCode, Json<serde_json::V
     }
 }
 
-async fn parse_handler(multipart: Multipart) -> impl IntoResponse {
+async fn parse_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    multipart: Multipart,
+) -> impl IntoResponse {
+    if let Err(response) = state.authenticate(&headers).await {
+        return response;
+    }
+
     let (filename, bytes, column_mapping) = match read_upload(multipart).await {
         Ok(upload) => upload,
         Err(response) => return response.into_response(),
@@ -220,7 +228,15 @@ async fn parse_handler(multipart: Multipart) -> impl IntoResponse {
     (status, Body::from(body)).into_response()
 }
 
-async fn analyze_handler(multipart: Multipart) -> impl IntoResponse {
+async fn analyze_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    multipart: Multipart,
+) -> impl IntoResponse {
+    if let Err(response) = state.authenticate(&headers).await {
+        return response;
+    }
+
     let (filename, bytes, column_mapping) = match read_upload(multipart).await {
         Ok(upload) => upload,
         Err(response) => return response.into_response(),

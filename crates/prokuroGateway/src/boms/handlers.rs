@@ -7,7 +7,7 @@ use serde_json::json;
 
 use prokuro_types::pagination::{page_by_id, PageError, PageParams};
 
-use crate::analyze::{AnalyzeResult, AnalyzedLine};
+use crate::analyze::{finalize_analyze, AnalyzeResult, AnalyzedLine};
 use crate::boms::analysis::{kick_changed_line_briefs, persist_overlay_if_changed};
 use crate::boms::briefs::{attach_line_briefs, needs_brief_refresh};
 use crate::boms::daily_refresh::refresh_record_from_cache;
@@ -145,7 +145,7 @@ pub async fn create_bom(
             Ok(boms) => boms.len() as u32,
             Err(error) => return store_error_response(error).into_response(),
         };
-        let line_count = upload.analyze.summary.total as u32;
+        let line_count = upload.analyze.lines.len() as u32;
         if let Err(cap) = billing
             .ensure_bom_create(&user, existing, line_count)
             .await
@@ -182,6 +182,15 @@ struct BomUpload {
     content_type: Option<String>,
     analyze: AnalyzeResult,
     name: Option<String>,
+}
+
+/// BOM ids become storage key segments, so they must not carry path separators.
+fn is_valid_bom_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 #[allow(clippy::result_large_err)]
@@ -250,13 +259,17 @@ async fn read_bom_upload(mut multipart: Multipart) -> Result<BomUpload, axum::re
             .into_response());
     };
 
-    let Some(analyze) = analyze.filter(|value| !value.upload_id.is_empty()) else {
+    let Some(mut analyze) = analyze.filter(|value| is_valid_bom_id(&value.upload_id)) else {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(json!({ "error": "missing or invalid 'analyze' field" })),
         )
             .into_response());
     };
+
+    // Summary and risk levels drive plan caps, so derive them here instead of
+    // trusting what the client sent.
+    finalize_analyze(&mut analyze);
 
     Ok(BomUpload {
         filename,

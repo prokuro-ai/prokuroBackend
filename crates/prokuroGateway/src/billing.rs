@@ -7,7 +7,7 @@
 //! - BILLING_TABLE (DynamoDB)
 //! - BILLING_REQUIRED=true to gate purchase endpoints (default false locally)
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use aws_sdk_dynamodb::types::AttributeValue;
@@ -46,6 +46,7 @@ struct BillingMemory {
     records: HashMap<String, BillingRecord>,
     overrides: HashMap<String, PlanOverride>,
     usage: HashMap<String, PlanUsage>,
+    seen_events: HashSet<String>,
 }
 
 enum BillingStore {
@@ -53,7 +54,7 @@ enum BillingStore {
         table: String,
         client: aws_sdk_dynamodb::Client,
     },
-    Memory(RwLock<BillingMemory>),
+    Memory(Box<RwLock<BillingMemory>>),
 }
 
 pub struct BillingService {
@@ -101,11 +102,12 @@ impl BillingService {
                 client: aws_sdk_dynamodb::Client::new(&config),
             }
         } else {
-            BillingStore::Memory(RwLock::new(BillingMemory {
+            BillingStore::Memory(Box::new(RwLock::new(BillingMemory {
                 records: HashMap::new(),
                 overrides: HashMap::new(),
                 usage: HashMap::new(),
-            }))
+                seen_events: HashSet::new(),
+            })))
         };
 
         Some(Arc::new(Self {
@@ -127,11 +129,12 @@ impl BillingService {
             webhook_secret: String::new(),
             price_growth: String::new(),
             price_scale: String::new(),
-            store: BillingStore::Memory(RwLock::new(BillingMemory {
+            store: BillingStore::Memory(Box::new(RwLock::new(BillingMemory {
                 records: HashMap::new(),
                 overrides: HashMap::new(),
                 usage: HashMap::new(),
-            })),
+                seen_events: HashSet::new(),
+            }))),
             required: false,
         })
     }
@@ -727,9 +730,10 @@ impl BillingService {
         if !self.stripe_configured() {
             return Err("Stripe billing not configured".into());
         }
-        if !self.webhook_secret.is_empty() {
-            verify_stripe_signature(headers, body, &self.webhook_secret)?;
+        if self.webhook_secret.is_empty() {
+            return Err("Stripe webhook secret not configured".into());
         }
+        verify_stripe_signature(headers, body, &self.webhook_secret)?;
 
         let event: StripeEvent =
             serde_json::from_slice(body).map_err(|e| format!("invalid webhook json: {e}"))?;
@@ -739,11 +743,64 @@ impl BillingService {
             | "customer.subscription.created"
             | "customer.subscription.updated"
             | "customer.subscription.deleted" => {
-                self.apply_subscription_event(&event).await?;
+                if !self.claim_event(&event.id).await? {
+                    return Ok(());
+                }
+                if let Err(error) = self.apply_subscription_event(&event).await {
+                    if let Err(release_error) = self.release_event(&event.id).await {
+                        tracing::error!(%release_error, "failed to release Stripe event claim");
+                    }
+                    return Err(error);
+                }
             }
             _ => {}
         }
         Ok(())
+    }
+
+    /// Records the Stripe event id so retries and replays apply at most once.
+    /// Returns false when the event was already processed.
+    async fn claim_event(&self, event_id: &str) -> Result<bool, String> {
+        match &self.store {
+            BillingStore::Memory(state) => {
+                Ok(state.write().await.seen_events.insert(event_id.to_string()))
+            }
+            BillingStore::Dynamo { table, client } => {
+                let result = client
+                    .put_item()
+                    .table_name(table)
+                    .item("pk", AttributeValue::S(format!("EVENT#{event_id}")))
+                    .item("sk", AttributeValue::S("STRIPE_EVENT".into()))
+                    .condition_expression("attribute_not_exists(pk)")
+                    .send()
+                    .await;
+                match result {
+                    Ok(_) => Ok(true),
+                    Err(error) if is_put_conditional_check_failed(&error) => Ok(false),
+                    Err(error) => Err(error.to_string()),
+                }
+            }
+        }
+    }
+
+    async fn release_event(&self, event_id: &str) -> Result<(), String> {
+        match &self.store {
+            BillingStore::Memory(state) => {
+                state.write().await.seen_events.remove(event_id);
+                Ok(())
+            }
+            BillingStore::Dynamo { table, client } => {
+                client
+                    .delete_item()
+                    .table_name(table)
+                    .key("pk", AttributeValue::S(format!("EVENT#{event_id}")))
+                    .key("sk", AttributeValue::S("STRIPE_EVENT".into()))
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+        }
     }
 
     async fn apply_subscription_event(&self, event: &StripeEvent) -> Result<(), String> {
@@ -759,8 +816,8 @@ impl BillingService {
             .and_then(|v| v.as_str())
             .map(str::to_string);
 
-        let subscription_id = if obj.get("object").and_then(|v| v.as_str()) == Some("subscription")
-        {
+        let is_subscription = obj.get("object").and_then(|v| v.as_str()) == Some("subscription");
+        let subscription_id = if is_subscription {
             obj.get("id").and_then(|v| v.as_str()).map(str::to_string)
         } else {
             obj.get("subscription")
@@ -779,9 +836,11 @@ impl BillingService {
                 current_period_end: None,
             })
         } else if let Some(customer_id) = &customer_id {
-            self.find_by_customer(customer_id)
-                .await?
-                .ok_or_else(|| "webhook: unknown Stripe customer".to_string())?
+            let Some(record) = self.find_by_customer(customer_id).await? else {
+                tracing::warn!(%customer_id, "Stripe webhook for unknown customer; ignoring");
+                return Ok(());
+            };
+            record
         } else {
             return Ok(());
         };
@@ -793,17 +852,12 @@ impl BillingService {
             record.stripe_subscription_id = Some(subscription_id);
         }
 
-        let status_str = obj
-            .get("status")
-            .and_then(|v| v.as_str())
-            .unwrap_or("active");
-        record.status = match status_str {
-            "trialing" => BillingStatus::Trialing,
-            "active" => BillingStatus::Active,
-            "past_due" => BillingStatus::PastDue,
-            "canceled" | "unpaid" | "incomplete_expired" => BillingStatus::Canceled,
-            _ if event.r#type == "customer.subscription.deleted" => BillingStatus::Canceled,
-            _ => BillingStatus::Active,
+        record.status = if event.r#type == "customer.subscription.deleted" {
+            BillingStatus::Canceled
+        } else if is_subscription {
+            subscription_status(obj.get("status").and_then(|v| v.as_str()))
+        } else {
+            checkout_session_status(obj)
         };
 
         if let Some(period_end) = obj.get("current_period_end").and_then(|v| v.as_i64()) {
@@ -909,20 +963,30 @@ impl BillingService {
                         .is_some_and(|id| id == customer_id)
                 })
                 .cloned()),
+            // Dynamo applies Limit before FilterExpression, so the scan must page
+            // through the table rather than cap the number of items examined.
             BillingStore::Dynamo { table, client } => {
-                let result = client
-                    .scan()
-                    .table_name(table)
-                    .filter_expression("stripe_customer_id = :c")
-                    .expression_attribute_values(":c", AttributeValue::S(customer_id.into()))
-                    .limit(1)
-                    .send()
-                    .await
-                    .map_err(|e| e.to_string())?;
-                Ok(result
-                    .items
-                    .and_then(|mut items| items.pop())
-                    .map(record_from_item))
+                let mut start_key = None;
+                loop {
+                    let result = client
+                        .scan()
+                        .table_name(table)
+                        .filter_expression("stripe_customer_id = :c")
+                        .expression_attribute_values(":c", AttributeValue::S(customer_id.into()))
+                        .set_exclusive_start_key(start_key)
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?;
+
+                    if let Some(item) = result.items.and_then(|mut items| items.pop()) {
+                        return Ok(Some(record_from_item(item)));
+                    }
+
+                    start_key = result.last_evaluated_key;
+                    if start_key.is_none() {
+                        return Ok(None);
+                    }
+                }
             }
         }
     }
@@ -949,6 +1013,27 @@ impl BillingService {
                 Ok(())
             }
         }
+    }
+}
+
+/// Maps a Stripe subscription status. Anything that is not a known entitling status —
+/// including `incomplete` and `paused` — leaves the account unentitled.
+fn subscription_status(status: Option<&str>) -> BillingStatus {
+    match status {
+        Some("trialing") => BillingStatus::Trialing,
+        Some("active") => BillingStatus::Active,
+        Some("past_due") => BillingStatus::PastDue,
+        Some("canceled" | "unpaid" | "incomplete_expired") => BillingStatus::Canceled,
+        _ => BillingStatus::None,
+    }
+}
+
+/// `checkout.session.completed` carries a session status, not a subscription status,
+/// so entitlement follows the payment rather than the session reaching "complete".
+fn checkout_session_status(session: &serde_json::Value) -> BillingStatus {
+    match session.get("payment_status").and_then(|v| v.as_str()) {
+        Some("paid" | "no_payment_required") => BillingStatus::Active,
+        _ => BillingStatus::None,
     }
 }
 
@@ -1055,6 +1140,13 @@ fn is_conditional_check_failed(
     err: &aws_sdk_dynamodb::error::SdkError<
         aws_sdk_dynamodb::operation::update_item::UpdateItemError,
     >,
+) -> bool {
+    err.as_service_error()
+        .is_some_and(|e| e.is_conditional_check_failed_exception())
+}
+
+fn is_put_conditional_check_failed(
+    err: &aws_sdk_dynamodb::error::SdkError<aws_sdk_dynamodb::operation::put_item::PutItemError>,
 ) -> bool {
     err.as_service_error()
         .is_some_and(|e| e.is_conditional_check_failed_exception())
@@ -1247,6 +1339,7 @@ fn status_str(status: BillingStatus) -> &'static str {
 
 #[derive(Debug, Deserialize)]
 struct StripeEvent {
+    id: String,
     r#type: String,
     data: StripeEventData,
 }
@@ -1291,6 +1384,9 @@ fn embedded_checkout_form(
     ]
 }
 
+/// Stripe's recommended replay window for webhook signatures.
+const WEBHOOK_TOLERANCE_SECS: i64 = 300;
+
 fn verify_stripe_signature(
     headers: &HeaderMap,
     body: &[u8],
@@ -1315,10 +1411,18 @@ fn verify_stripe_signature(
         }
     }
     let timestamp = timestamp.ok_or_else(|| "Stripe-Signature missing t".to_string())?;
-    let signed = format!("{timestamp}.{}", String::from_utf8_lossy(body));
+    let signed_at = timestamp
+        .parse::<i64>()
+        .map_err(|_| "Stripe-Signature has invalid t".to_string())?;
+    if (chrono::Utc::now().timestamp() - signed_at).abs() > WEBHOOK_TOLERANCE_SECS {
+        return Err("Stripe signature outside tolerance window".into());
+    }
+
     let mut mac =
         HmacSha256::new_from_slice(secret.as_bytes()).map_err(|e| e.to_string())?;
-    mac.update(signed.as_bytes());
+    mac.update(timestamp.as_bytes());
+    mac.update(b".");
+    mac.update(body);
     let expected = hex::encode(mac.finalize().into_bytes());
     if signatures.iter().any(|sig| sig == &expected) {
         Ok(())
@@ -1582,14 +1686,11 @@ mod tests {
     use super::*;
     use axum::http::HeaderValue;
 
-    #[test]
-    fn stripe_signature_accepts_valid_v1() {
-        let secret = "whsec_test";
-        let body = br#"{"type":"checkout.session.completed"}"#;
-        let timestamp = "1710000000";
-        let signed = format!("{timestamp}.{}", String::from_utf8_lossy(body));
+    fn signature_headers(secret: &str, body: &[u8], timestamp: i64) -> HeaderMap {
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
-        mac.update(signed.as_bytes());
+        mac.update(timestamp.to_string().as_bytes());
+        mac.update(b".");
+        mac.update(body);
         let sig = hex::encode(mac.finalize().into_bytes());
 
         let mut headers = HeaderMap::new();
@@ -1597,6 +1698,14 @@ mod tests {
             "Stripe-Signature",
             HeaderValue::from_str(&format!("t={timestamp},v1={sig}")).unwrap(),
         );
+        headers
+    }
+
+    #[test]
+    fn stripe_signature_accepts_valid_v1() {
+        let secret = "whsec_test";
+        let body = br#"{"type":"checkout.session.completed"}"#;
+        let headers = signature_headers(secret, body, chrono::Utc::now().timestamp());
         assert!(verify_stripe_signature(&headers, body, secret).is_ok());
     }
 
@@ -1604,18 +1713,96 @@ mod tests {
     fn stripe_signature_rejects_tampered_body() {
         let secret = "whsec_test";
         let body = br#"{"type":"checkout.session.completed"}"#;
-        let timestamp = "1710000000";
-        let signed = format!("{timestamp}.{}", String::from_utf8_lossy(body));
-        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
-        mac.update(signed.as_bytes());
-        let sig = hex::encode(mac.finalize().into_bytes());
-
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "Stripe-Signature",
-            HeaderValue::from_str(&format!("t={timestamp},v1={sig}")).unwrap(),
-        );
+        let headers = signature_headers(secret, body, chrono::Utc::now().timestamp());
         assert!(verify_stripe_signature(&headers, br#"{"type":"other"}"#, secret).is_err());
+    }
+
+    #[test]
+    fn stripe_signature_rejects_replayed_timestamp() {
+        let secret = "whsec_test";
+        let body = br#"{"type":"checkout.session.completed"}"#;
+        let stale = chrono::Utc::now().timestamp() - WEBHOOK_TOLERANCE_SECS - 1;
+        let headers = signature_headers(secret, body, stale);
+        assert!(verify_stripe_signature(&headers, body, secret).is_err());
+    }
+
+    #[tokio::test]
+    async fn webhook_is_rejected_when_secret_is_unconfigured() {
+        // `memory()` has no Stripe key, which short-circuits ahead of the
+        // webhook-secret check — set one so the guard under test is reached.
+        let mut billing =
+            Arc::try_unwrap(BillingService::memory()).unwrap_or_else(|_| unreachable!());
+        billing.secret_key = "sk_test".into();
+
+        let headers = signature_headers("whsec_test", b"{}", chrono::Utc::now().timestamp());
+        let error = billing
+            .handle_webhook(&headers, b"{}")
+            .await
+            .expect_err("unverifiable webhook must not be accepted");
+        assert!(error.contains("webhook secret not configured"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn event_is_claimed_once() {
+        let billing = BillingService::memory();
+        assert!(billing.claim_event("evt_1").await.unwrap());
+        assert!(!billing.claim_event("evt_1").await.unwrap());
+
+        billing.release_event("evt_1").await.unwrap();
+        assert!(billing.claim_event("evt_1").await.unwrap());
+    }
+
+    #[test]
+    fn unpaid_and_pending_subscriptions_are_not_entitled() {
+        for status in ["incomplete", "paused", "unpaid", "incomplete_expired"] {
+            assert_ne!(
+                subscription_status(Some(status)),
+                BillingStatus::Active,
+                "{status} must not entitle a paid plan"
+            );
+        }
+        assert_eq!(subscription_status(None), BillingStatus::None);
+        assert_eq!(subscription_status(Some("active")), BillingStatus::Active);
+        assert_eq!(
+            subscription_status(Some("trialing")),
+            BillingStatus::Trialing
+        );
+    }
+
+    #[test]
+    fn checkout_session_entitles_only_on_settled_payment() {
+        let unpaid = json!({"object": "checkout.session", "status": "complete", "payment_status": "unpaid"});
+        assert_eq!(checkout_session_status(&unpaid), BillingStatus::None);
+
+        let paid = json!({"object": "checkout.session", "status": "complete", "payment_status": "paid"});
+        assert_eq!(checkout_session_status(&paid), BillingStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn incomplete_subscription_event_leaves_account_on_free() {
+        let billing = BillingService::memory();
+        let event: StripeEvent = serde_json::from_value(json!({
+            "id": "evt_incomplete",
+            "type": "customer.subscription.created",
+            "data": {
+                "object": {
+                    "object": "subscription",
+                    "id": "sub_1",
+                    "customer": "cus_1",
+                    "status": "incomplete",
+                    "items": {"data": [{"price": {"id": ""}}]},
+                    "metadata": {"account_id": "acct-1", "plan": "scale"}
+                }
+            }
+        }))
+        .unwrap();
+
+        billing.apply_subscription_event(&event).await.unwrap();
+
+        let record = billing.get_record("acct-1").await.unwrap().unwrap();
+        let status = status_from_record(&record, None, empty_usage());
+        assert_eq!(status.plan, BillingPlan::Free);
+        assert_eq!(status.plan_source, PlanSource::Free);
     }
 
     #[test]

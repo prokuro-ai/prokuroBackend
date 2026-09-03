@@ -44,7 +44,7 @@ async fn health_returns_ok() {
 }
 
 #[tokio::test]
-async fn analyze_returns_422_on_missing_file() {
+async fn analyze_requires_auth() {
     let app = test_app().await;
     let boundary = "boundary123";
     let request = Request::builder()
@@ -63,8 +63,30 @@ async fn analyze_returns_422_on_missing_file() {
         .expect("analyze should produce response");
 
     assert!(
-        response.status() == StatusCode::UNPROCESSABLE_ENTITY
-            || response.status() == StatusCode::BAD_REQUEST
+        response.status() == StatusCode::UNAUTHORIZED
+            || response.status() == StatusCode::SERVICE_UNAVAILABLE
+    );
+}
+
+#[tokio::test]
+async fn parse_requires_auth() {
+    let app = test_app().await;
+    let boundary = "boundary123";
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/parse")
+        .header(
+            "content-type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(Body::from(format!("--{boundary}--\r\n")))
+        .expect("request should build");
+
+    let response = app.oneshot(request).await.expect("parse should respond");
+
+    assert!(
+        response.status() == StatusCode::UNAUTHORIZED
+            || response.status() == StatusCode::SERVICE_UNAVAILABLE
     );
 }
 
