@@ -172,6 +172,12 @@ pub struct BillingAccountStatus {
     pub current_period_end: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admin_expires_at: Option<String>,
+    /// Contract (or operator) access. Numeric plan caps are not enforced.
+    #[serde(default)]
+    pub provisioned: bool,
+    /// Any `@prokuro.ai` address — unlimited access and the in-app Admin page.
+    #[serde(default)]
+    pub is_operator: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

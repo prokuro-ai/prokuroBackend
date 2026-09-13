@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use axum::extract::{Multipart, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
@@ -7,7 +9,7 @@ use serde_json::json;
 
 use prokuro_types::pagination::{page_by_id, PageError, PageParams};
 
-use crate::analyze::{finalize_analyze, AnalyzeResult, AnalyzedLine};
+use crate::analyze::{finalize_analyze, AnalyzeResult, AnalyzedLine, RiskLevel};
 use crate::boms::analysis::{kick_changed_line_briefs, persist_overlay_if_changed};
 use crate::boms::briefs::{attach_line_briefs, needs_brief_refresh};
 use crate::boms::daily_refresh::refresh_record_from_cache;
@@ -51,6 +53,52 @@ pub async fn list_boms(
             )
                 .into_response(),
         },
+        Err(error) => store_error_response(error).into_response(),
+    }
+}
+
+pub async fn list_flagged_lines(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let user = match state.authenticate(&headers).await {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+
+    match state.bom_store.flagged_lines(&user.account_id).await {
+        Ok(mut flagged) => {
+            let mut brief_cache: HashMap<String, crate::boms::briefs::LineBriefs> = HashMap::new();
+            for item in &mut flagged.items {
+                if !brief_cache.contains_key(&item.bom_id) {
+                    let briefs = match state
+                        .bom_store
+                        .get_line_briefs(&user.account_id, &item.bom_id)
+                        .await
+                    {
+                        Ok(briefs) => briefs,
+                        Err(error) => {
+                            tracing::warn!(
+                                %error,
+                                bom_id = %item.bom_id,
+                                "failed to load line briefs"
+                            );
+                            crate::boms::briefs::LineBriefs::default()
+                        }
+                    };
+                    brief_cache.insert(item.bom_id.clone(), briefs);
+                }
+                if let Some(briefs) = brief_cache.get(&item.bom_id) {
+                    attach_line_briefs(std::slice::from_mut(&mut item.line), briefs);
+                }
+            }
+            flagged.items.sort_by_key(|item| match item.line.risk_level {
+                RiskLevel::Red => 0u8,
+                RiskLevel::Yellow => 1,
+                _ => 2,
+            });
+            Json(flagged).into_response()
+        }
         Err(error) => store_error_response(error).into_response(),
     }
 }

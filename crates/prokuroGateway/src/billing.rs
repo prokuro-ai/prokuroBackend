@@ -4,8 +4,7 @@
 //! - STRIPE_SECRET_KEY
 //! - STRIPE_WEBHOOK_SECRET
 //! - STRIPE_PRICE_GROWTH / STRIPE_PRICE_SCALE (Price IDs)
-//! - BILLING_TABLE (DynamoDB)
-//! - BILLING_REQUIRED=true to gate purchase endpoints (default false locally)
+//! - BILLING_TABLE (DynamoDB). If unset, grants live in memory (local gateway).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -24,6 +23,15 @@ use sha2::Sha256;
 use tokio::sync::RwLock;
 
 use crate::auth::{require_manage_team, AuthUser};
+
+const OPERATOR_DOMAIN: &str = "@prokuro.ai";
+
+pub fn is_operator_email(email: Option<&str>) -> bool {
+    email
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some_and(|value| value.to_ascii_lowercase().ends_with(OPERATOR_DOMAIN))
+}
 use crate::entitlements::{empty_usage, limits_for, usage_with_boms};
 use crate::state::AppState;
 use prokuro_types::purchasing::{
@@ -45,6 +53,9 @@ struct PlanOverride {
 struct BillingMemory {
     records: HashMap<String, BillingRecord>,
     overrides: HashMap<String, PlanOverride>,
+    email_grants: HashMap<String, PlanOverride>,
+    /// account_id → registrant email
+    interest_sent: HashMap<String, String>,
     usage: HashMap<String, PlanUsage>,
     seen_events: HashSet<String>,
 }
@@ -64,7 +75,17 @@ pub struct BillingService {
     price_growth: String,
     price_scale: String,
     store: BillingStore,
-    required: bool,
+}
+
+fn memory_store() -> BillingStore {
+    BillingStore::Memory(Box::new(RwLock::new(BillingMemory {
+        records: HashMap::new(),
+        overrides: HashMap::new(),
+        email_grants: HashMap::new(),
+        interest_sent: HashMap::new(),
+        usage: HashMap::new(),
+        seen_events: HashSet::new(),
+    })))
 }
 
 #[derive(Debug, Clone)]
@@ -84,16 +105,9 @@ impl BillingService {
             .ok()
             .filter(|value| !value.is_empty());
         let secret_key = std::env::var("STRIPE_SECRET_KEY").unwrap_or_default();
-        if table.is_none() && secret_key.is_empty() {
-            return None;
-        }
-
         let webhook_secret = std::env::var("STRIPE_WEBHOOK_SECRET").unwrap_or_default();
         let price_growth = std::env::var("STRIPE_PRICE_GROWTH").unwrap_or_default();
         let price_scale = std::env::var("STRIPE_PRICE_SCALE").unwrap_or_default();
-        let required = std::env::var("BILLING_REQUIRED")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
 
         let store = if let Some(table) = table {
             let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
@@ -102,12 +116,7 @@ impl BillingService {
                 client: aws_sdk_dynamodb::Client::new(&config),
             }
         } else {
-            BillingStore::Memory(Box::new(RwLock::new(BillingMemory {
-                records: HashMap::new(),
-                overrides: HashMap::new(),
-                usage: HashMap::new(),
-                seen_events: HashSet::new(),
-            })))
+            memory_store()
         };
 
         Some(Arc::new(Self {
@@ -117,7 +126,6 @@ impl BillingService {
             price_growth,
             price_scale,
             store,
-            required,
         }))
     }
 
@@ -129,13 +137,7 @@ impl BillingService {
             webhook_secret: String::new(),
             price_growth: String::new(),
             price_scale: String::new(),
-            store: BillingStore::Memory(Box::new(RwLock::new(BillingMemory {
-                records: HashMap::new(),
-                overrides: HashMap::new(),
-                usage: HashMap::new(),
-                seen_events: HashSet::new(),
-            }))),
-            required: false,
+            store: memory_store(),
         })
     }
 
@@ -214,210 +216,108 @@ impl BillingService {
             status: BillingStatus::None,
             current_period_end: None,
         });
-        let override_plan = self.get_plan_override(&user.account_id).await?;
+        let mut override_plan = self.get_plan_override(&user.account_id).await?;
+        if override_plan.as_ref().is_none_or(|entry| !grant_is_active(entry)) {
+            if let Some(email) = user.email.as_deref() {
+                if let Some(grant) = self.get_email_grant(email).await? {
+                    if grant_is_active(&grant) {
+                        self.set_admin_plan(
+                            &user.account_id,
+                            grant.plan,
+                            grant.expires_at.clone(),
+                            Some(email.to_string()),
+                        )
+                        .await?;
+                        override_plan = Some(grant);
+                    }
+                }
+            }
+        }
         let usage = self
             .get_usage(&user.account_id)
             .await
             .unwrap_or_else(|_| empty_usage());
         let usage = usage_with_boms(active_boms_count, usage);
-        Ok(status_from_record(&record, override_plan, usage))
+        Ok(status_from_record(
+            &record,
+            override_plan,
+            usage,
+            is_operator_email(user.email.as_deref()),
+        ))
     }
 
-    /// Enforce plan caps whenever the Dynamo billing table is configured (production).
-    fn caps_enforced(&self) -> bool {
-        matches!(&self.store, BillingStore::Dynamo { .. })
-    }
-
-    /// v1.1: Free can purchase under caps; paid needs Active/Trialing when billing required.
-    pub async fn ensure_can_purchase(&self, user: &AuthUser) -> Result<(), PurchaseStatus> {
-        if !self.caps_enforced() && !self.required {
+    pub async fn ensure_provisioned(&self, user: &AuthUser) -> Result<(), axum::response::Response> {
+        if is_operator_email(user.email.as_deref()) {
             return Ok(());
         }
-        let status = self
-            .status_for(user, 0)
-            .await
-            .map_err(|_| PurchaseStatus::Error)?;
-        if status.can_purchase {
+        let status = self.status_for(user, 0).await.map_err(|error| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": error})),
+            )
+                .into_response()
+        })?;
+        if status.provisioned {
             Ok(())
         } else {
-            Err(PurchaseStatus::RequiresSubscription)
+            Err(not_provisioned_response())
         }
     }
 
-    /// Reserve one purchasing action (and optionally one order) against plan caps.
-    /// Increments usage immediately with a conditional write so concurrent requests cannot overshoot.
-    /// Call [`Self::release_purchasing_action`] if the provider outcome should not count.
+    /// v1.1: provisioned accounts (and operators) can purchase. Unprovisioned cannot.
+    pub async fn ensure_can_purchase(&self, user: &AuthUser) -> Result<(), PurchaseStatus> {
+        match self.ensure_provisioned(user).await {
+            Ok(()) => Ok(()),
+            Err(_) => Err(PurchaseStatus::RequiresSubscription),
+        }
+    }
+
     pub async fn reserve_purchasing_action(
         &self,
         user: &AuthUser,
-        is_order: bool,
+        _is_order: bool,
     ) -> Result<(), CapError> {
-        if !self.caps_enforced() && !self.required {
-            return Ok(());
-        }
-        self.ensure_can_purchase(user)
-            .await
-            .map_err(|status| CapError {
-                plan: BillingPlan::Free,
-                cap: if matches!(status, PurchaseStatus::RequiresSubscription) {
-                    "subscription"
-                } else {
-                    "purchase"
-                },
-                used: 0,
-                limit: 0,
-                purchase_status: Some(status),
-            })?;
-
-        let status = self.status_for(user, 0).await.map_err(|_| CapError {
+        self.ensure_provisioned(user).await.map_err(|_| CapError {
             plan: BillingPlan::Free,
-            cap: "usage",
+            cap: "not_provisioned",
             used: 0,
             limit: 0,
-            purchase_status: Some(PurchaseStatus::Error),
-        })?;
-        let purchasing_limit = status.limits.purchasing_actions_per_month;
-        let order_limit = status.limits.orders_per_month;
-
-        match self
-            .try_reserve_usage_atomic(
-                &user.account_id,
-                purchasing_limit,
-                if is_order { Some(order_limit) } else { None },
-            )
-            .await
-        {
-            Ok(()) => Ok(()),
-            Err(ReserveError::Cap {
-                cap,
-                used,
-                limit,
-            }) => Err(CapError {
-                plan: status.plan,
-                cap,
-                used,
-                limit,
-                purchase_status: Some(PurchaseStatus::CapExceeded),
-            }),
-            Err(ReserveError::Write) => Err(CapError {
-                plan: status.plan,
-                cap: "usage_write",
-                used: 0,
-                limit: 0,
-                purchase_status: Some(PurchaseStatus::Error),
-            }),
-        }
+            purchase_status: Some(PurchaseStatus::RequiresSubscription),
+        })
     }
 
     /// Refund a previously reserved purchasing action when the provider outcome is not billable.
     pub async fn release_purchasing_action(
         &self,
-        user: &AuthUser,
-        is_order: bool,
+        _user: &AuthUser,
+        _is_order: bool,
     ) -> Result<(), String> {
-        if !self.caps_enforced() && !self.required {
-            return Ok(());
-        }
-        self.adjust_usage(
-            &user.account_id,
-            0,
-            0,
-            -1,
-            if is_order { -1 } else { 0 },
-        )
-        .await
+        Ok(())
     }
 
     pub async fn ensure_bom_create(
         &self,
         user: &AuthUser,
-        active_bom_count: u32,
-        line_count: u32,
+        _active_bom_count: u32,
+        _line_count: u32,
     ) -> Result<(), CapError> {
-        if !self.caps_enforced() && !self.required {
-            return Ok(());
-        }
-        let status = self.status_for(user, active_bom_count).await.map_err(|_| CapError {
+        self.ensure_provisioned(user).await.map_err(|_| CapError {
             plan: BillingPlan::Free,
-            cap: "usage",
+            cap: "not_provisioned",
             used: 0,
             limit: 0,
-            purchase_status: None,
-        })?;
-        let limits = &status.limits;
-        let usage = &status.usage;
-
-        if active_bom_count >= limits.active_boms {
-            return Err(CapError {
-                plan: status.plan,
-                cap: "active_boms",
-                used: active_bom_count,
-                limit: limits.active_boms,
-                purchase_status: None,
-            });
-        }
-        if line_count > limits.max_lines_per_bom {
-            return Err(CapError {
-                plan: status.plan,
-                cap: "max_lines_per_bom",
-                used: line_count,
-                limit: limits.max_lines_per_bom,
-                purchase_status: None,
-            });
-        }
-        if usage.analyses_count >= limits.analyses_per_month {
-            return Err(CapError {
-                plan: status.plan,
-                cap: "analyses_per_month",
-                used: usage.analyses_count,
-                limit: limits.analyses_per_month,
-                purchase_status: None,
-            });
-        }
-        if usage.lines_count + line_count > limits.lines_per_month {
-            return Err(CapError {
-                plan: status.plan,
-                cap: "lines_per_month",
-                used: usage.lines_count,
-                limit: limits.lines_per_month,
-                purchase_status: None,
-            });
-        }
-
-        self.increment_usage(&user.account_id, 1, line_count, 0, 0)
-            .await
-            .map_err(|_| CapError {
-                plan: status.plan,
-                cap: "usage_write",
-                used: 0,
-                limit: 0,
-                purchase_status: None,
-            })?;
-        Ok(())
+            purchase_status: Some(PurchaseStatus::RequiresSubscription),
+        })
     }
 
-    /// Enforces per-BOM line cap on updates/re-analyze (does not increment monthly usage).
-    pub async fn ensure_bom_update(&self, user: &AuthUser, line_count: u32) -> Result<(), CapError> {
-        if !self.caps_enforced() && !self.required {
-            return Ok(());
-        }
-        let status = self.status_for(user, 0).await.map_err(|_| CapError {
+    pub async fn ensure_bom_update(&self, user: &AuthUser, _line_count: u32) -> Result<(), CapError> {
+        self.ensure_provisioned(user).await.map_err(|_| CapError {
             plan: BillingPlan::Free,
-            cap: "usage",
+            cap: "not_provisioned",
             used: 0,
             limit: 0,
-            purchase_status: None,
-        })?;
-        if line_count > status.limits.max_lines_per_bom {
-            return Err(CapError {
-                plan: status.plan,
-                cap: "max_lines_per_bom",
-                used: line_count,
-                limit: status.limits.max_lines_per_bom,
-                purchase_status: None,
-            });
-        }
-        Ok(())
+            purchase_status: Some(PurchaseStatus::RequiresSubscription),
+        })
     }
 
     async fn usage_sk() -> String {
@@ -638,6 +538,271 @@ impl BillingService {
                 Ok(result.item.and_then(plan_override_from_item))
             }
         }
+    }
+
+    async fn get_email_grant(&self, email: &str) -> Result<Option<PlanOverride>, String> {
+        let key = normalize_grant_email(email)?;
+        match &self.store {
+            BillingStore::Memory(state) => {
+                Ok(state.read().await.email_grants.get(&key).cloned())
+            }
+            BillingStore::Dynamo { table, client } => {
+                let result = client
+                    .get_item()
+                    .table_name(table)
+                    .key("pk", AttributeValue::S(format!("EMAIL#{key}")))
+                    .key("sk", AttributeValue::S("GRANT".into()))
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(result.item.and_then(plan_override_from_item))
+            }
+        }
+    }
+
+    async fn put_email_grant(
+        &self,
+        email: &str,
+        expires_at: Option<String>,
+    ) -> Result<(), String> {
+        let key = normalize_grant_email(email)?;
+        let grant = PlanOverride {
+            plan: BillingPlan::Scale,
+            expires_at,
+            note: Some(key.clone()),
+        };
+        match &self.store {
+            BillingStore::Memory(state) => {
+                state.write().await.email_grants.insert(key, grant);
+                Ok(())
+            }
+            BillingStore::Dynamo { table, client } => {
+                let mut item = plan_override_item(&key, grant.plan, grant.expires_at.as_deref(), grant.note.as_deref());
+                item.insert("pk".into(), AttributeValue::S(format!("EMAIL#{key}")));
+                item.insert("sk".into(), AttributeValue::S("GRANT".into()));
+                client
+                    .put_item()
+                    .table_name(table)
+                    .set_item(Some(item))
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+        }
+    }
+
+    async fn delete_email_grant(&self, email: &str) -> Result<(), String> {
+        let key = normalize_grant_email(email)?;
+        match &self.store {
+            BillingStore::Memory(state) => {
+                state.write().await.email_grants.remove(&key);
+                Ok(())
+            }
+            BillingStore::Dynamo { table, client } => {
+                client
+                    .delete_item()
+                    .table_name(table)
+                    .key("pk", AttributeValue::S(format!("EMAIL#{key}")))
+                    .key("sk", AttributeValue::S("GRANT".into()))
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn grant_email(
+        &self,
+        email: &str,
+        expires_at: Option<String>,
+        account_id: Option<&str>,
+    ) -> Result<(), String> {
+        self.put_email_grant(email, expires_at.clone()).await?;
+        if let Some(account_id) = account_id {
+            self.set_admin_plan(account_id, BillingPlan::Scale, expires_at, Some(email.into()))
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn revoke_email(&self, email: &str, account_id: Option<&str>) -> Result<(), String> {
+        self.delete_email_grant(email).await?;
+        if let Some(account_id) = account_id {
+            self.clear_admin_plan(account_id).await?;
+        }
+        Ok(())
+    }
+
+    /// `None` = never recorded. `Some(None)` = recorded without an email (legacy rows).
+    async fn interest_sent_email(&self, account_id: &str) -> Result<Option<Option<String>>, String> {
+        match &self.store {
+            BillingStore::Memory(state) => Ok(state
+                .read()
+                .await
+                .interest_sent
+                .get(account_id)
+                .cloned()
+                .map(Some)),
+            BillingStore::Dynamo { table, client } => {
+                let result = client
+                    .get_item()
+                    .table_name(table)
+                    .key("pk", AttributeValue::S(format!("ACCOUNT#{account_id}")))
+                    .key("sk", AttributeValue::S("INTEREST_SENT".into()))
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let Some(item) = result.item else {
+                    return Ok(None);
+                };
+                let email = item
+                    .get("email")
+                    .and_then(|v| v.as_s().ok())
+                    .map(|s| s.to_string())
+                    .filter(|s| !s.is_empty());
+                Ok(Some(email))
+            }
+        }
+    }
+
+    async fn mark_interest_sent(&self, account_id: &str, email: &str) -> Result<(), String> {
+        let email = email.trim().to_lowercase();
+        match &self.store {
+            BillingStore::Memory(state) => {
+                state
+                    .write()
+                    .await
+                    .interest_sent
+                    .insert(account_id.to_string(), email);
+                Ok(())
+            }
+            BillingStore::Dynamo { table, client } => {
+                let mut item = HashMap::new();
+                item.insert(
+                    "pk".into(),
+                    AttributeValue::S(format!("ACCOUNT#{account_id}")),
+                );
+                item.insert("sk".into(), AttributeValue::S("INTEREST_SENT".into()));
+                item.insert("email".into(), AttributeValue::S(email));
+                item.insert("account_id".into(), AttributeValue::S(account_id.to_string()));
+                client
+                    .put_item()
+                    .table_name(table)
+                    .set_item(Some(item))
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn list_access(&self) -> Result<Vec<serde_json::Value>, String> {
+        let mut enabled: Vec<serde_json::Value> = Vec::new();
+        let mut waiting: Vec<serde_json::Value> = Vec::new();
+        let mut enabled_emails = HashSet::new();
+
+        match &self.store {
+            BillingStore::Memory(state) => {
+                let guard = state.read().await;
+                for (email, grant) in &guard.email_grants {
+                    enabled_emails.insert(email.clone());
+                    enabled.push(json!({
+                        "email": email,
+                        "status": "enabled",
+                        "expires_at": grant.expires_at,
+                    }));
+                }
+                for (account_id, email) in &guard.interest_sent {
+                    if enabled_emails.contains(email) {
+                        continue;
+                    }
+                    waiting.push(json!({
+                        "email": email,
+                        "status": "waiting",
+                        "account_id": account_id,
+                    }));
+                }
+            }
+            BillingStore::Dynamo { table, client } => {
+                let mut start_key = None;
+                loop {
+                    let mut scan = client.scan().table_name(table);
+                    if let Some(key) = start_key {
+                        scan = scan.set_exclusive_start_key(Some(key));
+                    }
+                    let page = scan.send().await.map_err(|e| e.to_string())?;
+                    for item in page.items.unwrap_or_default() {
+                        let sk = item.get("sk").and_then(|v| v.as_s().ok()).map(|s| s.as_str());
+                        let get_s = |key: &str| {
+                            item.get(key)
+                                .and_then(|v| v.as_s().ok())
+                                .map(|s| s.to_string())
+                        };
+                        match sk {
+                            Some("GRANT") => {
+                                let email = get_s("admin_note")
+                                    .or_else(|| {
+                                        get_s("pk").and_then(|pk| {
+                                            pk.strip_prefix("EMAIL#").map(str::to_string)
+                                        })
+                                    })
+                                    .unwrap_or_default();
+                                if email.is_empty() {
+                                    continue;
+                                }
+                                enabled_emails.insert(email.clone());
+                                enabled.push(json!({
+                                    "email": email,
+                                    "status": "enabled",
+                                    "expires_at": get_s("admin_expires_at"),
+                                }));
+                            }
+                            Some("INTEREST_SENT") => {
+                                let Some(email) = get_s("email") else {
+                                    continue;
+                                };
+                                let account_id = get_s("account_id").or_else(|| {
+                                    get_s("pk").and_then(|pk| {
+                                        pk.strip_prefix("ACCOUNT#").map(str::to_string)
+                                    })
+                                });
+                                waiting.push(json!({
+                                    "email": email,
+                                    "status": "waiting",
+                                    "account_id": account_id,
+                                }));
+                            }
+                            _ => {}
+                        }
+                    }
+                    start_key = page.last_evaluated_key;
+                    if start_key.is_none() {
+                        break;
+                    }
+                }
+                waiting.retain(|row| {
+                    row.get("email")
+                        .and_then(|v| v.as_str())
+                        .is_none_or(|email| !enabled_emails.contains(email))
+                });
+            }
+        }
+
+        enabled.sort_by(|a, b| {
+            a.get("email")
+                .and_then(|v| v.as_str())
+                .cmp(&b.get("email").and_then(|v| v.as_str()))
+        });
+        waiting.sort_by(|a, b| {
+            a.get("email")
+                .and_then(|v| v.as_str())
+                .cmp(&b.get("email").and_then(|v| v.as_str()))
+        });
+        waiting.extend(enabled);
+        Ok(waiting)
     }
 
     pub async fn create_checkout(
@@ -1037,21 +1202,41 @@ fn checkout_session_status(session: &serde_json::Value) -> BillingStatus {
     }
 }
 
+fn grant_is_active(entry: &PlanOverride) -> bool {
+    entry
+        .expires_at
+        .as_deref()
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .is_none_or(|expires| expires > chrono::Utc::now())
+}
+
+fn not_provisioned_response() -> axum::response::Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({
+            "error": "not_provisioned",
+            "message": "This account is not enabled yet. We will reach out after we review your registration.",
+        })),
+    )
+        .into_response()
+}
+
 fn status_from_record(
     record: &BillingRecord,
     override_plan: Option<PlanOverride>,
     usage: PlanUsage,
+    is_operator: bool,
 ) -> BillingAccountStatus {
-    let now = chrono::Utc::now();
-    let active_override = override_plan.filter(|entry| {
-        entry
-            .expires_at
-            .as_deref()
-            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-            .is_none_or(|expires| expires > now)
-    });
+    let active_override = override_plan.filter(grant_is_active);
 
-    let (plan, status, plan_source, admin_expires_at) = if let Some(entry) = active_override {
+    let (plan, status, plan_source, admin_expires_at) = if is_operator {
+        (
+            BillingPlan::Scale,
+            BillingStatus::Active,
+            PlanSource::Admin,
+            None,
+        )
+    } else if let Some(entry) = &active_override {
         (
             entry.plan,
             BillingStatus::Active,
@@ -1083,24 +1268,28 @@ fn status_from_record(
         )
     };
 
-    let can_purchase = match plan {
-        BillingPlan::Free => true,
-        BillingPlan::Growth | BillingPlan::Scale => matches!(
+    let provisioned = is_operator
+        || active_override.is_some()
+        || matches!(
+            plan_source,
+            PlanSource::Stripe
+        ) && matches!(
             status,
-            BillingStatus::Active | BillingStatus::Trialing
-        ) || plan_source == PlanSource::Admin,
-    };
+            BillingStatus::Active | BillingStatus::Trialing | BillingStatus::PastDue
+        );
     let limits = limits_for(plan);
     BillingAccountStatus {
         plan,
         status,
         plan_source,
-        can_purchase,
+        can_purchase: provisioned,
         limits,
         usage,
         stripe_customer_id: record.stripe_customer_id.clone(),
         current_period_end: normalize_period_end(record.current_period_end.as_deref()),
         admin_expires_at,
+        provisioned,
+        is_operator,
     }
 }
 
@@ -1163,32 +1352,57 @@ pub struct CapError {
 
 impl CapError {
     pub fn into_response(self) -> axum::response::Response {
+        let not_provisioned = self.cap == "not_provisioned";
+        let mut body = json!({
+            "error": if not_provisioned { "not_provisioned" } else { "plan_cap_exceeded" },
+            "plan": plan_str(self.plan),
+            "cap": self.cap,
+            "used": self.used,
+            "limit": self.limit,
+        });
+        if not_provisioned {
+            body["message"] = json!(
+                "This account is not enabled yet. We will reach out after we review your registration."
+            );
+        }
         (
-            StatusCode::PAYMENT_REQUIRED,
-            Json(json!({
-                "error": "plan_cap_exceeded",
-                "plan": plan_str(self.plan),
-                "cap": self.cap,
-                "used": self.used,
-                "limit": self.limit,
-            })),
+            if not_provisioned {
+                StatusCode::FORBIDDEN
+            } else {
+                StatusCode::PAYMENT_REQUIRED
+            },
+            Json(body),
         )
             .into_response()
     }
 }
 
-fn free_status_payload(active_boms_count: u32, can_purchase: bool) -> BillingAccountStatus {
-    let plan = BillingPlan::Free;
+fn free_status_payload(active_boms_count: u32, is_operator: bool) -> BillingAccountStatus {
+    let plan = if is_operator {
+        BillingPlan::Scale
+    } else {
+        BillingPlan::Free
+    };
     BillingAccountStatus {
         plan,
-        status: BillingStatus::None,
-        plan_source: PlanSource::Free,
-        can_purchase,
+        status: if is_operator {
+            BillingStatus::Active
+        } else {
+            BillingStatus::None
+        },
+        plan_source: if is_operator {
+            PlanSource::Admin
+        } else {
+            PlanSource::Free
+        },
+        can_purchase: is_operator,
         limits: limits_for(plan),
         usage: usage_with_boms(active_boms_count, empty_usage()),
         stripe_customer_id: None,
         current_period_end: None,
         admin_expires_at: None,
+        provisioned: is_operator,
+        is_operator,
     }
 }
 
@@ -1317,6 +1531,14 @@ fn record_from_item(item: HashMap<String, AttributeValue>) -> BillingRecord {
         },
         current_period_end: get_s("current_period_end"),
     }
+}
+
+fn normalize_grant_email(email: &str) -> Result<String, String> {
+    let email = email.trim().to_lowercase();
+    if email.len() < 5 || !email.contains('@') || !email.contains('.') {
+        return Err("invalid email".into());
+    }
+    Ok(email)
 }
 
 fn plan_str(plan: BillingPlan) -> &'static str {
@@ -1450,13 +1672,241 @@ pub async fn billing_status(
         .unwrap_or(0);
 
     let Some(billing) = &state.billing else {
-        return Json(free_status_payload(active_boms_count, true)).into_response();
+        let operator = is_operator_email(user.email.as_deref());
+        return Json(free_status_payload(active_boms_count, operator)).into_response();
     };
 
     match billing.status_for(&user, active_boms_count).await {
-        Ok(status) => Json(status).into_response(),
+        Ok(status) => {
+            if !status.provisioned && !status.is_operator {
+                if let Err(error) = notify_interest_if_needed(billing.as_ref(), &user).await {
+                    tracing::warn!(%error, "interest notification failed");
+                }
+            }
+            Json(status).into_response()
+        }
         Err(error) => (StatusCode::BAD_GATEWAY, Json(json!({"error": error}))).into_response(),
     }
+}
+
+async fn notify_interest_if_needed(
+    billing: &BillingService,
+    user: &AuthUser,
+) -> Result<(), String> {
+    let Some(email) = user.email.as_deref() else {
+        return Ok(());
+    };
+    match billing.interest_sent_email(&user.account_id).await? {
+        Some(Some(_)) => Ok(()),
+        Some(None) => billing.mark_interest_sent(&user.account_id, email).await,
+        None => {
+            send_interest_mail(email).await;
+            billing.mark_interest_sent(&user.account_id, email).await
+        }
+    }
+}
+
+async fn send_interest_mail(user_email: &str) {
+    let Some(mailer) = crate::team::mail::InviteMailer::from_env().await else {
+        tracing::info!(user_email, "interest email skipped; mailer not configured");
+        return;
+    };
+    let user_text = "Thanks for registering with Prokuro. We have logged your request and will reach out.\n\n— Prokuro\nhttps://prokuro.ai\n";
+    let user_html = crate::team::mail::branded_email(
+        "We received your Prokuro registration",
+        "We have your request",
+        "<p style=\"margin:0 0 16px;font-size:15px;line-height:1.6;color:#4f5d73;\">Thanks for registering. We logged your request and will reach out after we review it. You will get another email when your account is enabled.</p>",
+        Some(("Visit Prokuro", "https://prokuro.ai")),
+    );
+    if let Err(error) = mailer
+        .send_message(user_email, "We received your Prokuro registration", user_text, user_html)
+        .await
+    {
+        tracing::warn!(user_email, %error, "could not email registrant");
+    }
+    let lead_text = format!("{user_email} registered and is waiting for access.\n");
+    let lead_html = format!("<p><strong>{user_email}</strong> registered and is waiting for access.</p>");
+    if let Err(error) = mailer
+        .send_message(
+            "sales@prokuro.ai",
+            &format!("Prokuro access request: {user_email}"),
+            &lead_text,
+            &lead_html,
+        )
+        .await
+    {
+        tracing::warn!(user_email, %error, "could not email sales about registration");
+    }
+}
+
+async fn send_ready_mail(user_email: &str) {
+    let Some(mailer) = crate::team::mail::InviteMailer::from_env().await else {
+        tracing::info!(user_email, "ready email skipped; mailer not configured");
+        return;
+    };
+    let url = login_url();
+    let text = format!(
+        "Your Prokuro account is ready.\n\nLog in:\n{url}\n\n— Prokuro\nhttps://prokuro.ai\n"
+    );
+    let html = crate::team::mail::branded_email(
+        "Your Prokuro account is ready",
+        "Your account is ready",
+        "<p style=\"margin:0 0 16px;font-size:15px;line-height:1.6;color:#4f5d73;\">Access is on for your team. Log in to upload a BOM and see what to buy, drop, or watch.</p>",
+        Some(("Log in to Prokuro", &url)),
+    );
+    if let Err(error) = mailer
+        .send_message(user_email, "Your Prokuro account is ready", &text, &html)
+        .await
+    {
+        tracing::warn!(user_email, %error, "could not send ready email");
+    }
+}
+
+fn login_url() -> String {
+    let base = std::env::var("APP_BASE_URL").unwrap_or_else(|_| "http://localhost:3010".into());
+    format!("{}/login", base.trim_end_matches('/'))
+}
+
+fn require_operator(user: &AuthUser) -> Result<(), axum::response::Response> {
+    if is_operator_email(user.email.as_deref()) {
+        Ok(())
+    } else {
+        Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "forbidden"})),
+        )
+            .into_response())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GrantBody {
+    pub email: String,
+    pub expires_at: Option<String>,
+}
+
+pub async fn billing_grant_create(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<GrantBody>, JsonRejection>,
+) -> impl IntoResponse {
+    let user = match state.authenticate(&headers).await {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    if let Err(response) = require_operator(&user) {
+        return response;
+    }
+    let Some(billing) = &state.billing else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "billing store not configured"})),
+        )
+            .into_response();
+    };
+    let body = match payload {
+        Ok(Json(body)) => body,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": error.body_text()})),
+            )
+                .into_response();
+        }
+    };
+    let email = match normalize_grant_email(&body.email) {
+        Ok(email) => email,
+        Err(error) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": error}))).into_response();
+        }
+    };
+    let account_id = state
+        .team
+        .find_account_by_email(&email)
+        .await
+        .ok()
+        .flatten();
+    if let Err(error) = billing
+        .grant_email(&email, body.expires_at.clone(), account_id.as_deref())
+        .await
+    {
+        return (StatusCode::BAD_GATEWAY, Json(json!({"error": error}))).into_response();
+    }
+    send_ready_mail(&email).await;
+    Json(json!({
+        "email": email,
+        "expires_at": body.expires_at,
+        "account_id": account_id,
+    }))
+    .into_response()
+}
+
+pub async fn billing_grant_list(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let user = match state.authenticate(&headers).await {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    if let Err(response) = require_operator(&user) {
+        return response;
+    }
+    let Some(billing) = &state.billing else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "billing store not configured"})),
+        )
+            .into_response();
+    };
+    match billing.list_access().await {
+        Ok(items) => Json(json!({ "items": items })).into_response(),
+        Err(error) => (StatusCode::BAD_GATEWAY, Json(json!({"error": error}))).into_response(),
+    }
+}
+
+pub async fn billing_grant_delete(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    let user = match state.authenticate(&headers).await {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    if let Err(response) = require_operator(&user) {
+        return response;
+    }
+    let Some(billing) = &state.billing else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "billing store not configured"})),
+        )
+            .into_response();
+    };
+    let Some(email) = query.get("email").filter(|value| !value.is_empty()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "email query param is required"})),
+        )
+            .into_response();
+    };
+    let email = match normalize_grant_email(email) {
+        Ok(email) => email,
+        Err(error) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": error}))).into_response();
+        }
+    };
+    let account_id = state
+        .team
+        .find_account_by_email(&email)
+        .await
+        .ok()
+        .flatten();
+    if let Err(error) = billing.revoke_email(&email, account_id.as_deref()).await {
+        return (StatusCode::BAD_GATEWAY, Json(json!({"error": error}))).into_response();
+    }
+    Json(json!({"email": email, "revoked": true})).into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -1702,6 +2152,18 @@ mod tests {
     }
 
     #[test]
+    fn prokuro_ai_addresses_are_operators() {
+        assert!(is_operator_email(Some("mounir@prokuro.ai")));
+        assert!(is_operator_email(Some("yusuf@Prokuro.AI")));
+        assert!(is_operator_email(Some("sinjab@prokuro.ai")));
+        assert!(!is_operator_email(Some("buyer@company.com")));
+        assert!(!is_operator_email(Some("admin@notprokuro.ai")));
+        assert!(!is_operator_email(Some("prokuro.ai@evil.com")));
+        assert!(!is_operator_email(Some("someone@prokuro.ai.attacker.com")));
+        assert!(!is_operator_email(None));
+    }
+
+    #[test]
     fn stripe_signature_accepts_valid_v1() {
         let secret = "whsec_test";
         let body = br#"{"type":"checkout.session.completed"}"#;
@@ -1740,6 +2202,45 @@ mod tests {
             .await
             .expect_err("unverifiable webhook must not be accepted");
         assert!(error.contains("webhook secret not configured"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn list_access_waiting_then_enabled() {
+        let billing = BillingService::memory();
+        billing
+            .mark_interest_sent("acct-wait", "wait@company.com")
+            .await
+            .unwrap();
+        billing
+            .mark_interest_sent("acct-both", "both@company.com")
+            .await
+            .unwrap();
+        billing
+            .grant_email("both@company.com", None, Some("acct-both"))
+            .await
+            .unwrap();
+        billing
+            .grant_email(
+                "only@company.com",
+                Some("2027-03-01T00:00:00Z".into()),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let items = billing.list_access().await.unwrap();
+        let emails: Vec<_> = items
+            .iter()
+            .map(|row| row["email"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            emails,
+            vec!["wait@company.com", "both@company.com", "only@company.com"]
+        );
+        assert_eq!(items[0]["status"], "waiting");
+        assert_eq!(items[1]["status"], "enabled");
+        assert_eq!(items[2]["status"], "enabled");
+        assert_eq!(items[2]["expires_at"], "2027-03-01T00:00:00Z");
     }
 
     #[tokio::test]
@@ -1800,7 +2301,7 @@ mod tests {
         billing.apply_subscription_event(&event).await.unwrap();
 
         let record = billing.get_record("acct-1").await.unwrap().unwrap();
-        let status = status_from_record(&record, None, empty_usage());
+        let status = status_from_record(&record, None, empty_usage(), false);
         assert_eq!(status.plan, BillingPlan::Free);
         assert_eq!(status.plan_source, PlanSource::Free);
     }
@@ -1816,7 +2317,7 @@ mod tests {
             status: BillingStatus::Active,
             current_period_end: None,
         };
-        assert!(status_from_record(&record, None, empty_usage()).can_purchase);
+        assert!(status_from_record(&record, None, empty_usage(), false).can_purchase);
 
         let free = BillingRecord {
             plan: BillingPlan::Free,
@@ -1825,10 +2326,9 @@ mod tests {
             stripe_subscription_id: None,
             ..record.clone()
         };
-        let free_status = status_from_record(&free, None, empty_usage());
-        assert!(free_status.can_purchase);
-        assert_eq!(free_status.limits.active_boms, 1);
-        assert_eq!(free_status.limits.purchasing_actions_per_month, 5);
+        let free_status = status_from_record(&free, None, empty_usage(), false);
+        assert!(!free_status.can_purchase);
+        assert!(!free_status.provisioned);
 
         let admin = status_from_record(
             &free,
@@ -1838,6 +2338,7 @@ mod tests {
                 note: Some("pilot".into()),
             }),
             empty_usage(),
+            false,
         );
         assert_eq!(admin.plan, BillingPlan::Growth);
         assert_eq!(admin.plan_source, PlanSource::Admin);
@@ -1871,7 +2372,7 @@ mod tests {
             status: BillingStatus::Active,
             current_period_end: None,
         };
-        let status = status_from_record(&record, None, empty_usage());
+        let status = status_from_record(&record, None, empty_usage(), false);
         assert_eq!(status.plan, BillingPlan::Free);
         assert_eq!(status.plan_source, PlanSource::Free);
     }

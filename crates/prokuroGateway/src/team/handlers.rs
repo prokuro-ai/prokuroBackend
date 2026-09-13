@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::auth::{require_manage_team, TeamRole};
-use crate::entitlements::{limits_for, plan_slug};
+use crate::entitlements::plan_slug;
 use crate::state::AppState;
 use crate::team::mail::{accept_url, InviteEmailDelivery, InviteMailer};
 use crate::team::store::{InviteRecord, MemberRecord, TeamError};
@@ -37,13 +37,12 @@ pub async fn list_members(State(state): State<AppState>, headers: HeaderMap) -> 
         Ok(snapshot) => {
             let used = (snapshot.members.len() + snapshot.invites.len()) as u32;
             let plan = state.plan_for(&user).await;
-            let limits = limits_for(plan);
             Json(json!({
                 "account_id": user.account_id,
                 "user_id": user.user_id,
                 "role": user.role.as_str(),
                 "plan": plan_slug(plan),
-                "seats": { "used": used, "limit": limits.seats },
+                "seats": { "used": used },
                 "members": snapshot.members.iter().map(member_json).collect::<Vec<_>>(),
                 "invites": snapshot.invites.iter().map(invite_json).collect::<Vec<_>>(),
             }))
@@ -74,30 +73,10 @@ pub async fn create_invite(
             .into_response();
     };
 
-    let plan = state.plan_for(&user).await;
-    let limits = limits_for(plan);
-    let used = match state.team.seat_usage(&user.account_id).await {
-        Ok(used) => used,
-        Err(error) => return store_error(error).into_response(),
-    };
-    if used >= limits.seats {
-        let message = if limits.seats == 1 {
-            "Free plan includes 1 seat (owner only). Upgrade to invite teammates."
-        } else {
-            "This plan's seat limit has been reached. Upgrade or revoke a pending invite."
-        };
-        return (
-            StatusCode::PAYMENT_REQUIRED,
-            Json(json!({
-                "error": "plan_cap_exceeded",
-                "plan": plan_slug(plan),
-                "cap": "seats",
-                "used": used,
-                "limit": limits.seats,
-                "message": message,
-            })),
-        )
-            .into_response();
+    if let Some(billing) = &state.billing {
+        if let Err(response) = billing.ensure_provisioned(&user).await {
+            return response;
+        }
     }
 
     match state
@@ -424,7 +403,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn free_plan_invite_returns_402() {
+    async fn unprovisioned_owner_cannot_invite() {
         let (state, _temp) = test_state();
         let app = crate::app(state);
         let (status, body) = json_request(
@@ -435,11 +414,24 @@ mod tests {
             Some(r#"{"email":"teammate@example.com","role":"read_only"}"#),
         )
         .await;
-        assert_eq!(status, StatusCode::PAYMENT_REQUIRED);
-        assert_eq!(body["error"], "plan_cap_exceeded");
-        assert_eq!(body["cap"], "seats");
-        assert_eq!(body["limit"], 1);
-        assert!(body["message"].as_str().unwrap().contains("owner only"));
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"], "not_provisioned");
+    }
+
+    #[tokio::test]
+    async fn operator_can_invite_without_grant() {
+        let (state, _temp) = test_state();
+        let app = crate::app(state);
+        let (status, body) = json_request(
+            app,
+            "POST",
+            "/v1/team/invites",
+            "Bearer test:operator:mounir@prokuro.ai",
+            Some(r#"{"email":"teammate@example.com","role":"read_only"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["email"], "teammate@example.com");
     }
 
     #[tokio::test]
@@ -520,7 +512,7 @@ mod tests {
             Some(r#"{"email":"third@example.com","role":"admin"}"#),
         )
         .await;
-        assert_eq!(status, StatusCode::PAYMENT_REQUIRED);
+        assert_eq!(status, StatusCode::CREATED);
 
         let accept_body = format!(r#"{{"token":"{token}"}}"#);
         let (status, accepted) = json_request(

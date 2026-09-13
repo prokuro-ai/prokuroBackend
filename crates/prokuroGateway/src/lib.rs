@@ -14,11 +14,12 @@ use tower_http::cors::{Any, CorsLayer};
 use analyze::{apply_tariff_results, finalize_analyze, merge, AnalyzeResult};
 use auth::require_write;
 use billing::{
-    billing_admin_clear_plan, billing_admin_set_plan, billing_checkout, billing_portal,
-    billing_status, billing_webhook,
+    billing_admin_clear_plan, billing_admin_set_plan, billing_checkout, billing_grant_create,
+    billing_grant_delete, billing_grant_list, billing_portal, billing_status, billing_webhook,
 };
 use boms::handlers::{
-    add_line, create_bom, delete_bom, delete_line, get_bom, list_boms, patch_line, put_bom,
+    add_line, create_bom, delete_bom, delete_line, get_bom, list_boms, list_flagged_lines,
+    patch_line, put_bom,
 };
 use clients::enrichment::{EnrichInput, EnrichmentClient};
 use clients::parser::ParserClient;
@@ -81,6 +82,12 @@ pub fn app(state: AppState) -> Router {
         .route("/v1/purchase/quote", post(purchase_quote_handler))
         .route("/v1/purchase/orders", post(purchase_orders_handler))
         .route("/v1/billing/status", get(billing_status))
+        .route(
+            "/v1/billing/grants",
+            get(billing_grant_list)
+                .post(billing_grant_create)
+                .delete(billing_grant_delete),
+        )
         .route("/v1/billing/checkout", post(billing_checkout))
         .route("/v1/billing/portal", post(billing_portal))
         .route("/v1/billing/webhook", post(billing_webhook))
@@ -91,6 +98,7 @@ pub fn app(state: AppState) -> Router {
         .route("/v1/team/invites/accept", post(accept_invite))
         .route("/v1/team/invites/{id}", delete(revoke_invite))
         .route("/v1/boms", get(list_boms).post(create_bom))
+        .route("/v1/boms/flagged", get(list_flagged_lines))
         .route(
             "/v1/boms/{id}",
             get(get_bom).put(put_bom).delete(delete_bom),
@@ -390,16 +398,6 @@ async fn purchase_quote_handler(
             .into_response();
         }
         reserved = true;
-    } else if billing_required_env() {
-        return Json(QuoteResponse {
-            provider: request.provider,
-            status: PurchaseStatus::RequiresSubscription,
-            lines: Vec::new(),
-            currency: None,
-            subtotal: None,
-            message: Some("billing not configured".into()),
-        })
-        .into_response();
     }
 
     match PurchasingClient::from_env().quote(&request).await {
@@ -486,14 +484,6 @@ async fn purchase_orders_handler(
             .into_response();
         }
         reserved = true;
-    } else if billing_required_env() {
-        return Json(PlaceOrderResponse {
-            provider: request.provider,
-            status: PurchaseStatus::RequiresSubscription,
-            distributor_order_id: None,
-            message: Some("billing not configured".into()),
-        })
-        .into_response();
     }
 
     match PurchasingClient::from_env().place_order(&request).await {
@@ -579,12 +569,6 @@ mod purchasing_usage_tests {
         assert!(counts_toward_purchasing_usage(PurchaseStatus::Partial));
         assert!(counts_toward_purchasing_usage(PurchaseStatus::Submitted));
     }
-}
-
-fn billing_required_env() -> bool {
-    std::env::var("BILLING_REQUIRED")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
 }
 
 pub async fn build_app_state() -> Arc<AppState> {

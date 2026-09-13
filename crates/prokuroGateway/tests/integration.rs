@@ -91,6 +91,22 @@ async fn parse_requires_auth() {
 }
 
 #[tokio::test]
+async fn list_flagged_lines_requires_auth() {
+    let app = test_app().await;
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/boms/flagged")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app.oneshot(request).await.expect("flagged should respond");
+    assert!(
+        response.status() == StatusCode::UNAUTHORIZED
+            || response.status() == StatusCode::SERVICE_UNAVAILABLE
+    );
+}
+
+#[tokio::test]
 async fn list_boms_requires_auth() {
     let app = test_app().await;
     let request = Request::builder()

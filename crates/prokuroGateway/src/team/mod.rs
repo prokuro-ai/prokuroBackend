@@ -1,5 +1,5 @@
 mod handlers;
-mod mail;
+pub(crate) mod mail;
 mod store;
 
 pub use handlers::{

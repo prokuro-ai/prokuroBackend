@@ -5,12 +5,14 @@ use crate::analyze::{AnalyzedLine, RiskLevel};
 use super::types::{BomRecord, BomSummary};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FlaggedLines {
     pub account_id: String,
     pub items: Vec<FlaggedLineItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FlaggedLineItem {
     pub bom_id: String,
     pub bom_name: String,

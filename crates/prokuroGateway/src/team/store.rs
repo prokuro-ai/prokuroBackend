@@ -645,6 +645,38 @@ impl TeamStore {
             }
         }
     }
+
+    pub async fn find_account_by_email(&self, email: &str) -> Result<Option<String>, String> {
+        let needle = email.trim().to_lowercase();
+        match &self.mode {
+            StoreMode::Memory(state) => {
+                let state = state.read().await;
+                Ok(state.users.values().find_map(|member| {
+                    member
+                        .email
+                        .as_ref()
+                        .filter(|value| value.eq_ignore_ascii_case(&needle))
+                        .map(|_| member.account_id.clone())
+                }))
+            }
+            StoreMode::Dynamo { client, table } => {
+                let result = client
+                    .scan()
+                    .table_name(table)
+                    .filter_expression("email = :email AND sk = :sk")
+                    .expression_attribute_values(":email", AttributeValue::S(needle))
+                    .expression_attribute_values(":sk", AttributeValue::S("ACCOUNT".into()))
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(result.items.unwrap_or_default().into_iter().find_map(|item| {
+                    item.get("account_id")
+                        .and_then(|v| v.as_s().ok())
+                        .map(|s| s.to_string())
+                }))
+            }
+        }
+    }
 }
 
 fn normalize_email(email: &str) -> Result<String, TeamError> {
