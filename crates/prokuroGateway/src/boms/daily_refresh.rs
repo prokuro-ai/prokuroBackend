@@ -113,12 +113,13 @@ pub async fn refresh_record_from_cache(
 }
 
 pub fn apply_summary_from_analyze(record: &mut BomRecord) {
-    let (score, at_risk, unknown_count, risk_band) = bom_summary_fields(&record.analyze);
-    record.summary.at_risk_count = at_risk;
-    record.summary.overall_risk_score = score;
+    let fields = bom_summary_fields(&record.analyze);
+    record.summary.at_risk_count = fields.at_risk_count;
+    record.summary.overall_risk_score = fields.overall_risk_score;
     record.summary.line_count = record.analyze.summary.total;
-    record.summary.unknown_count = unknown_count;
-    record.summary.risk_band = risk_band;
+    record.summary.unknown_count = fields.unknown_count;
+    record.summary.pending_count = fields.pending_count;
+    record.summary.risk_band = fields.risk_band;
 }
 
 fn env_duration(name: &str) -> Option<Duration> {

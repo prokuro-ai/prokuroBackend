@@ -242,6 +242,7 @@ mod tests {
                 yellow_count: 0,
                 green_count: 0,
                 unknown_count: 0,
+                pending_count: 0,
             },
             lines,
             top_risks: Vec::new(),

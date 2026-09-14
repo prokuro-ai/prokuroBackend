@@ -26,6 +26,10 @@ pub struct BomSummary {
     pub at_risk_count: usize,
     #[serde(default)]
     pub unknown_count: usize,
+    /// Subset of `unknown_count` still awaiting enrichment. Lets a client say
+    /// "still looking up" instead of labelling the BOM unmatched.
+    #[serde(default)]
+    pub pending_count: usize,
     #[serde(default)]
     pub risk_band: String,
 }
@@ -66,14 +70,24 @@ pub fn portfolio_risk_band(summary: &AnalyzeSummary) -> &'static str {
     }
 }
 
-pub fn bom_summary_fields(analyze: &AnalyzeResult) -> (f64, usize, usize, String) {
+/// Summary counters derived from an analyze result, for stamping onto a `BomSummary`.
+pub struct BomSummaryFields {
+    pub overall_risk_score: f64,
+    pub at_risk_count: usize,
+    pub unknown_count: usize,
+    pub pending_count: usize,
+    pub risk_band: String,
+}
+
+pub fn bom_summary_fields(analyze: &AnalyzeResult) -> BomSummaryFields {
     let summary = &analyze.summary;
-    (
-        overall_risk_score(summary),
-        at_risk_count(summary),
-        summary.unknown_count,
-        portfolio_risk_band(summary).to_string(),
-    )
+    BomSummaryFields {
+        overall_risk_score: overall_risk_score(summary),
+        at_risk_count: at_risk_count(summary),
+        unknown_count: summary.unknown_count,
+        pending_count: summary.pending_count,
+        risk_band: portfolio_risk_band(summary).to_string(),
+    }
 }
 
 pub fn default_bom_name(filename: &str, provided: Option<&str>) -> String {
@@ -132,7 +146,9 @@ fn format_name_token(token: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{at_risk_count, overall_risk_score, portfolio_risk_band, scorable_line_count};
+    use super::{
+        at_risk_count, overall_risk_score, portfolio_risk_band, scorable_line_count, BomSummary,
+    };
     use crate::analyze::AnalyzeSummary;
 
     fn summary(red: usize, yellow: usize, unknown: usize, total: usize) -> AnalyzeSummary {
@@ -148,7 +164,23 @@ mod tests {
             yellow_count: yellow,
             green_count: total.saturating_sub(red + yellow + unknown),
             unknown_count: unknown,
+            pending_count: 0,
         }
+    }
+
+    /// Records written before `pending_count` existed must still load.
+    #[test]
+    fn legacy_summary_without_pending_count_defaults_to_zero() {
+        let json = r#"{
+            "id":"bom-1","name":"Board","filename":"board.csv",
+            "uploadedAt":"2026-01-01T00:00:00Z","version":2,
+            "updatedAt":"2026-01-01T00:00:00Z","lineCount":5,
+            "overallRiskScore":7.5,"atRiskCount":3,"unknownCount":1,"riskBand":"Critical"
+        }"#;
+        let summary: BomSummary = serde_json::from_str(json).expect("legacy summary loads");
+        assert_eq!(summary.pending_count, 0);
+        assert_eq!(summary.unknown_count, 1);
+        assert_eq!(summary.at_risk_count, 3);
     }
 
     #[test]

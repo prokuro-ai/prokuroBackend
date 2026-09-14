@@ -256,8 +256,7 @@ impl BomStore {
         let prefix = self.bom_prefix(&input.account_id, &bom_id);
         let uploaded_at = chrono_now();
         let name = default_bom_name(&input.filename, input.name.as_deref());
-        let (overall_risk_score, at_risk_count, unknown_count, risk_band) =
-            bom_summary_fields(&input.analyze);
+        let fields = bom_summary_fields(&input.analyze);
         let summary = BomSummary {
             id: bom_id.clone(),
             name,
@@ -266,10 +265,11 @@ impl BomStore {
             version: 1,
             updated_at: uploaded_at,
             line_count: input.analyze.summary.total,
-            overall_risk_score,
-            at_risk_count,
-            unknown_count,
-            risk_band,
+            overall_risk_score: fields.overall_risk_score,
+            at_risk_count: fields.at_risk_count,
+            unknown_count: fields.unknown_count,
+            pending_count: fields.pending_count,
+            risk_band: fields.risk_band,
         };
 
         let ext = extension_for(&input.filename);
@@ -858,11 +858,12 @@ fn bump_summary_after_edit(summary: &mut BomSummary, analyze: &AnalyzeResult) {
     summary.version = summary.version.saturating_add(1);
     summary.updated_at = chrono_now();
     summary.line_count = analyze.summary.total;
-    let (overall_risk_score, at_risk_count, unknown_count, risk_band) = bom_summary_fields(analyze);
-    summary.overall_risk_score = overall_risk_score;
-    summary.at_risk_count = at_risk_count;
-    summary.unknown_count = unknown_count;
-    summary.risk_band = risk_band;
+    let fields = bom_summary_fields(analyze);
+    summary.overall_risk_score = fields.overall_risk_score;
+    summary.at_risk_count = fields.at_risk_count;
+    summary.unknown_count = fields.unknown_count;
+    summary.pending_count = fields.pending_count;
+    summary.risk_band = fields.risk_band;
 }
 
 fn apply_line_patch(line: &mut AnalyzedLine, patch: &LinePatch) {
@@ -1005,6 +1006,7 @@ mod tests {
                 yellow_count: 0,
                 green_count: 0,
                 unknown_count: 0,
+                pending_count: 0,
             },
             lines,
             top_risks: Vec::new(),

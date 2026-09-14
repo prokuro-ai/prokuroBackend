@@ -42,6 +42,11 @@ pub struct AnalyzeSummary {
     pub green_count: usize,
     #[serde(default)]
     pub unknown_count: usize,
+    /// Subset of `unknown_count` that enrichment has not answered for yet, as opposed
+    /// to lines it answered with no catalog match. Defaulted for records written
+    /// before this field existed.
+    #[serde(default)]
+    pub pending_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +160,7 @@ pub fn merge(parse: ParseResult, enrich: Vec<EnrichResult>) -> AnalyzeResult {
             yellow_count: 0,
             green_count: 0,
             unknown_count: 0,
+            pending_count: 0,
         },
         lines,
         top_risks: Vec::new(),
@@ -272,16 +278,21 @@ pub fn finalize_analyze(result: &mut AnalyzeResult) {
         .iter()
         .filter(|line| line.risk_level == RiskLevel::Unknown)
         .count();
+    result.summary.pending_count = result.lines.iter().filter(|line| is_pending_line(line)).count();
 
     result.top_risks = select_top_risks(&result.lines, 5);
 }
 
+/// Enrichment has not answered for this line yet. A caller must not present these
+/// the same way as a resolved no-match: we have not looked, rather than looked and missed.
+pub fn is_pending_line(line: &AnalyzedLine) -> bool {
+    line.availability_status.eq_ignore_ascii_case("pending")
+        || line.match_status.eq_ignore_ascii_case("pending")
+}
+
 /// Pending enrichment or a resolved distributor no-match — not lifecycle/supply scored.
 fn is_unscored_line(line: &AnalyzedLine) -> bool {
-    let availability = line.availability_status.to_ascii_lowercase();
-    let match_status = line.match_status.to_ascii_lowercase();
-
-    availability == "pending" || match_status == "pending" || availability == "nomatch"
+    is_pending_line(line) || line.availability_status.eq_ignore_ascii_case("nomatch")
 }
 
 pub fn score_risk(line: &AnalyzedLine) -> RiskLevel {
@@ -502,6 +513,7 @@ mod tests {
                 yellow_count: 0,
                 green_count: 0,
                 unknown_count: 0,
+                pending_count: 0,
             },
             lines: vec![
                 {
@@ -530,6 +542,60 @@ mod tests {
         assert_eq!(result.summary.total, 4);
         assert_eq!(result.summary.no_match, 1);
         assert_eq!(result.summary.error_count, 0);
+        assert_eq!(result.summary.pending_count, 0, "a resolved no-match is not pending");
+    }
+
+    #[test]
+    fn pending_count_separates_unanswered_lines_from_no_match() {
+        let mut result = AnalyzeResult {
+            upload_id: "u".into(),
+            source_filename: "bom.csv".into(),
+            sheet_name: None,
+            mapping_confidence: 1.0,
+            summary: AnalyzeSummary {
+                total: 0,
+                in_stock: 0,
+                out_of_stock: 0,
+                eol_or_nrnd: 0,
+                no_match: 0,
+                error_count: 0,
+                long_lead: 0,
+                red_count: 0,
+                yellow_count: 0,
+                green_count: 0,
+                unknown_count: 0,
+                pending_count: 0,
+            },
+            lines: vec![
+                {
+                    let mut line = healthy_line(0);
+                    line.availability_status = "Pending".into();
+                    line.match_status = "Pending".into();
+                    line
+                },
+                {
+                    let mut line = healthy_line(1);
+                    line.availability_status = "NoMatch".into();
+                    line
+                },
+                {
+                    // Enrichment answered the match but not availability.
+                    let mut line = healthy_line(2);
+                    line.availability_status = "Pending".into();
+                    line
+                },
+                healthy_line(3),
+            ],
+            top_risks: Vec::new(),
+            warnings: Vec::new(),
+            stats: json!({}),
+            analyzed_at: "2026-09-14T00:00:00Z".into(),
+        };
+        finalize_analyze(&mut result);
+        // All three are unscored; only two of them are still being looked up.
+        assert_eq!(result.summary.unknown_count, 3);
+        assert_eq!(result.summary.pending_count, 2);
+        assert_eq!(result.summary.green_count, 1);
     }
 
     #[test]
@@ -551,6 +617,7 @@ mod tests {
                 yellow_count: 0,
                 green_count: 0,
                 unknown_count: 0,
+                pending_count: 0,
             },
             lines: (0..10)
                 .map(|idx| {
@@ -591,6 +658,7 @@ mod tests {
                 yellow_count: 0,
                 green_count: 0,
                 unknown_count: 0,
+                pending_count: 0,
             },
             lines: vec![
                 {
@@ -691,6 +759,7 @@ mod tests {
                 yellow_count: 0,
                 green_count: 0,
                 unknown_count: 0,
+                pending_count: 0,
             },
             lines,
             top_risks: Vec::new(),
