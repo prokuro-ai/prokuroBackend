@@ -1719,7 +1719,7 @@ async fn send_interest_mail(user_email: &str) {
         Some(("Visit Prokuro", "https://prokuro.ai")),
     );
     if let Err(error) = mailer
-        .send_message(user_email, "We received your Prokuro registration", user_text, user_html)
+        .send_message(user_email, "We received your Prokuro registration", user_text, &user_html)
         .await
     {
         tracing::warn!(user_email, %error, "could not email registrant");
