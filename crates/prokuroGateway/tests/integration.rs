@@ -238,6 +238,7 @@ async fn tariff_overlay_populates_analyzed_line_fields_from_mock_service() {
             yellow_count: 0,
             green_count: 0,
             unknown_count: 0,
+            pending_count: 0,
         },
         lines: vec![sample_line()],
         top_risks: Vec::new(),

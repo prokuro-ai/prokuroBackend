@@ -113,6 +113,7 @@ mod tests {
             overall_risk_score: 0.0,
             at_risk_count,
             unknown_count: 0,
+            pending_count: 0,
             risk_band: if at_risk_count > 0 {
                 "Watch".to_string()
             } else {
@@ -141,6 +142,7 @@ mod tests {
                     yellow_count: 0,
                     green_count: 0,
                     unknown_count: 0,
+                    pending_count: 0,
                 },
                 lines,
                 top_risks: Vec::new(),

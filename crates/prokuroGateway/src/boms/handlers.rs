@@ -839,6 +839,7 @@ mod tests {
                 yellow_count: 0,
                 green_count: 0,
                 unknown_count: 0,
+                pending_count: 0,
             },
             lines: vec![sample_line(0, "A")],
             top_risks: Vec::new(),
@@ -935,6 +936,7 @@ mod tests {
                 yellow_count: 1,
                 green_count: 0,
                 unknown_count: 0,
+                pending_count: 0,
             },
             lines: vec![{
                 let mut line = sample_line(0, "OOS-1");
