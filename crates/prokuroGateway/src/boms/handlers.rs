@@ -9,7 +9,7 @@ use serde_json::json;
 
 use prokuro_types::pagination::{page_by_id, PageError, PageParams};
 
-use crate::analyze::{finalize_analyze, AnalyzeResult, AnalyzedLine, RiskLevel};
+use crate::analyze::{finalize_analyze, AnalyzeResult, AnalyzedLine};
 use crate::boms::analysis::{kick_changed_line_briefs, persist_overlay_if_changed};
 use crate::boms::briefs::{attach_line_briefs, needs_brief_refresh};
 use crate::boms::daily_refresh::refresh_record_from_cache;
@@ -92,11 +92,6 @@ pub async fn list_flagged_lines(
                     attach_line_briefs(std::slice::from_mut(&mut item.line), briefs);
                 }
             }
-            flagged.items.sort_by_key(|item| match item.line.risk_level {
-                RiskLevel::Red => 0u8,
-                RiskLevel::Yellow => 1,
-                _ => 2,
-            });
             Json(flagged).into_response()
         }
         Err(error) => store_error_response(error).into_response(),
