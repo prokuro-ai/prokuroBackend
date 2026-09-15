@@ -1,14 +1,22 @@
 use serde::{Deserialize, Serialize};
 
-use crate::analyze::{AnalyzedLine, RiskLevel};
+use crate::analyze::{risk_priority, AnalyzedLine, RiskLevel};
 
 use super::types::{BomRecord, BomSummary};
+
+/// Account-wide cap for the dashboard flagged feed. Per-BOM caps bury a
+/// fully-red BOM under yellows from a quieter one.
+pub const FLAGGED_FEED_LIMIT: usize = 10;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FlaggedLines {
     pub account_id: String,
     pub items: Vec<FlaggedLineItem>,
+    /// Flagged lines across the account before the cap. Clients can say
+    /// "showing N of M" without loading the rest.
+    #[serde(default)]
+    pub total: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,10 +66,27 @@ pub fn collect_flagged_lines<E>(
         items.extend(flagged_items_from_record(load_bom(&summary.id)?));
     }
 
-    Ok(FlaggedLines {
+    Ok(rank_and_cap_flagged(account_id, items))
+}
+
+/// Red before Yellow (same as `select_top_risks`), then row index, then BOM id.
+pub fn rank_and_cap_flagged(
+    account_id: impl Into<String>,
+    mut items: Vec<FlaggedLineItem>,
+) -> FlaggedLines {
+    let total = items.len();
+    items.sort_by(|a, b| {
+        risk_priority(a.line.risk_level)
+            .cmp(&risk_priority(b.line.risk_level))
+            .then_with(|| a.line.row_index.cmp(&b.line.row_index))
+            .then_with(|| a.bom_id.cmp(&b.bom_id))
+    });
+    items.truncate(FLAGGED_FEED_LIMIT);
+    FlaggedLines {
         account_id: account_id.into(),
         items,
-    })
+        total,
+    }
 }
 
 #[cfg(test)]
@@ -162,6 +187,7 @@ mod tests {
 
         assert_eq!(result.account_id, "account-a");
         assert!(result.items.is_empty());
+        assert_eq!(result.total, 0);
     }
 
     #[test]
@@ -189,6 +215,7 @@ mod tests {
             .map(|item| item.line.mpn.as_deref())
             .collect();
         assert_eq!(mpns, vec![Some("RED-1"), Some("YELLOW-1")]);
+        assert_eq!(result.total, 2);
         assert!(result.items.iter().all(|item| {
             item.bom_id == "bom-mix" && item.bom_name == "Mixed Board" && item.bom_version == 3
         }));
@@ -216,7 +243,81 @@ mod tests {
         .expect("collect");
 
         assert_eq!(result.items.len(), 1);
+        assert_eq!(result.total, 1);
         assert_eq!(result.items[0].bom_id, "bom-watch");
         assert_eq!(result.items[0].line.mpn.as_deref(), Some("YELLOW-2"));
+    }
+
+    #[test]
+    fn reds_from_a_hot_bom_rank_above_yellows_from_a_quiet_one() {
+        let summaries = [
+            summary("bom-quiet", "Quiet Board", 2, 1),
+            summary("bom-hot", "Hot Board", 2, 1),
+        ];
+        let result = collect_flagged_lines("account-a", &summaries, |id| -> Result<BomRecord, ()> {
+            if id == "bom-quiet" {
+                Ok(record(
+                    "bom-quiet",
+                    "Quiet Board",
+                    1,
+                    vec![
+                        line(0, "YELLOW-A", RiskLevel::Yellow),
+                        line(1, "YELLOW-B", RiskLevel::Yellow),
+                    ],
+                ))
+            } else {
+                Ok(record(
+                    "bom-hot",
+                    "Hot Board",
+                    1,
+                    vec![
+                        line(0, "RED-A", RiskLevel::Red),
+                        line(1, "RED-B", RiskLevel::Red),
+                    ],
+                ))
+            }
+        })
+        .expect("collect");
+
+        let mpns: Vec<_> = result
+            .items
+            .iter()
+            .map(|item| item.line.mpn.as_deref())
+            .collect();
+        assert_eq!(
+            mpns,
+            vec![Some("RED-A"), Some("RED-B"), Some("YELLOW-A"), Some("YELLOW-B")]
+        );
+        assert_eq!(result.total, 4);
+    }
+
+    #[test]
+    fn account_cap_keeps_reds_and_reports_the_uncapped_total() {
+        let mut lines = vec![
+            line(0, "RED-0", RiskLevel::Red),
+            line(1, "RED-1", RiskLevel::Red),
+            line(2, "RED-2", RiskLevel::Red),
+        ];
+        for i in 0..12 {
+            lines.push(line(i + 10, &format!("YELLOW-{i}"), RiskLevel::Yellow));
+        }
+        let summaries = [summary("bom-busy", "Busy Board", 15, 1)];
+        let result = collect_flagged_lines("account-a", &summaries, |_| -> Result<BomRecord, ()> {
+            Ok(record("bom-busy", "Busy Board", 1, lines.clone()))
+        })
+        .expect("collect");
+
+        assert_eq!(result.total, 15);
+        assert_eq!(result.items.len(), FLAGGED_FEED_LIMIT);
+        assert!(result
+            .items
+            .iter()
+            .take(3)
+            .all(|item| item.line.risk_level == RiskLevel::Red));
+        assert!(result
+            .items
+            .iter()
+            .skip(3)
+            .all(|item| item.line.risk_level == RiskLevel::Yellow));
     }
 }

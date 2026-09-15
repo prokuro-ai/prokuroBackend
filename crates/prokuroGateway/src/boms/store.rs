@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 use crate::analyze::{finalize_analyze, AnalyzeResult, AnalyzedLine, RiskLevel};
 
 use super::briefs::{analyze_without_briefs, LineBriefs};
-use super::flagged::{flagged_items_from_record, FlaggedLines};
+use super::flagged::{flagged_items_from_record, rank_and_cap_flagged, FlaggedLines};
 use super::types::{bom_summary_fields, default_bom_name, extension_for, BomRecord, BomSummary};
 
 #[derive(Debug, thiserror::Error)]
@@ -164,10 +164,7 @@ impl BomStore {
             let record = self.get_bom(account_id, &summary.id).await?;
             items.extend(flagged_items_from_record(record));
         }
-        Ok(FlaggedLines {
-            account_id: account_id.to_string(),
-            items,
-        })
+        Ok(rank_and_cap_flagged(account_id, items))
     }
 
     /// Persist refreshed analyze.json + summary (read-through enrichment / briefs).
@@ -1065,7 +1062,8 @@ mod tests {
             .iter()
             .map(|item| item.line.mpn.as_deref())
             .collect();
-        assert_eq!(mpns, vec![Some("OOS"), Some("EOL")]);
+        assert_eq!(mpns, vec![Some("EOL"), Some("OOS")]);
+        assert_eq!(flagged.total, 2);
         assert!(flagged
             .items
             .iter()

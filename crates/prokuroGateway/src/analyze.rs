@@ -339,7 +339,7 @@ fn select_top_risks(lines: &[AnalyzedLine], limit: usize) -> Vec<AnalyzedLine> {
     ranked.into_iter().take(limit).cloned().collect()
 }
 
-fn risk_priority(level: RiskLevel) -> u8 {
+pub(crate) fn risk_priority(level: RiskLevel) -> u8 {
     match level {
         RiskLevel::Red => 0,
         RiskLevel::Yellow => 1,
